@@ -81,6 +81,12 @@ class MacroSpec:
     tech_params: TechParams
     spatial_axes: List[SpatialAxisSpec]
     compartment_depth: int = 8
+    # Ping-pong-capable weight store. False = memory and compute modes are
+    # mutually exclusive, so the weight tile is single-buffered. True = the macro
+    # may write one weight bank while computing on the other; the MIP decides
+    # weight double buffering at the Macro level, and two tiles share the same
+    # compartment_depth.
+    weight_double_buffer: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> "MacroSpec":
@@ -93,6 +99,7 @@ class MacroSpec:
             tech_params=TechParams.from_dict(d["tech_params"]),
             spatial_axes=[SpatialAxisSpec.from_dict(a) for a in d["spatial_axes"]],
             compartment_depth=d.get("compartment_depth", 8),
+            weight_double_buffer=bool(d.get("weight_double_buffer", False)),
         )
 
 

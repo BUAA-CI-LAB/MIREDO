@@ -274,9 +274,9 @@ class Solver():
                 if self.su[u][d] > 1:
                     loops.sm.append(Mapping(dim=d, dimSize=self.su[u][d],
                                            mem=[acc.SpUr2Mem[u, op] for op in range(3)]))
+        # The opMAC row (index Num_mem) stays 0: macro weight double buffering is
+        # carried by double_config[Macro2mem][W].
         double_tag = [[0] * 3 for _ in range(acc.Num_mem + 1)]
-        for op in range(3):
-            double_tag[acc.Num_mem][op] = acc.double_Macro
         loops.usr_defined_double_flag = double_tag
         loops.psum_flag = {m: False for m in range(1, acc.Num_mem)}
         self.dataflow = loops
@@ -1768,7 +1768,9 @@ class Solver():
             for m in range(1,acc.Num_mem+1):
                 for op, op_name in enumerate(['I','W','O']):
                     if m==acc.Num_mem:
-                        double_tag[m][op] = acc.double_Macro
+                        # opMAC row: no buffering decision; the macro weight's
+                        # flag is read from indic_doubleMem[Macro2mem, W] below.
+                        double_tag[m][op] = 0
                         continue
                     if acc.double_config[m][op]:
                         val = indic_doubleMem[m,op]

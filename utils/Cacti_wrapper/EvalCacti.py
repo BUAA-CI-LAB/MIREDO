@@ -80,7 +80,7 @@ def cacti_power(tech_node: float,
 
 def dram_static(capacity_bytes: int,
                 bus_width_bits: int = 64,
-                mem_type: str = "DDR4",
+                mem_type: str = "LPDDR4",
                 freq_hz: float = 500e6):
     """LPDDR4/DDR4/HBM2 static (leakage) power estimation from public datasheet data.
 
@@ -109,9 +109,9 @@ def dram_static(capacity_bytes: int,
         raise ValueError(f"mem_type must be one of {list(LEAK_PER_GB)}")
 
     cap_gib = capacity_bytes / 2**30
-    width_fac = bus_width_bits / 64
-
-    P_leak_mW = LEAK_PER_GB[mem_type] * cap_gib * width_fac
+    # Standby (IDD2N) leakage tracks total capacity, not the accelerator's per-cycle
+    # bus width; bus_width_bits is kept only for signature/backward compatibility.
+    P_leak_mW = LEAK_PER_GB[mem_type] * cap_gib
     if freq_hz is None:
         return P_leak_mW
     E_leak_pJ = P_leak_mW * 1e-3 / freq_hz * 1e12

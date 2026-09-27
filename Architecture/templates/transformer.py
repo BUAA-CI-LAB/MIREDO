@@ -1,99 +1,172 @@
-# HW-Transformer 配置 —— 中档移动级 Transformer CIM 加速器
+# Transformer hardware template: 16-core digital SRAM-CIM accelerator at 28 nm.
 #
-# 从 HW-Small (templates/default.py) 派生，参数放大以容纳 ViT-Base/16 (seq=197, d_model=768,
-# MLP hidden=3072) 和 BERT-Base (seq=128, d_model=768) 而不强制退化到 DRAM-bound mapping。
+# Each core holds one 64x256 macro array (64 rows x 32 INT8 weight columns)
+# with a storage-to-compute ratio of 8:1, a 16 KB input buffer and a 32 KB
+# output buffer (256 bit/cycle). The cores share a 4 MB global buffer
+# (512 bit/cycle) and 4 GB of DRAM (256 bit/cycle). Inputs and weights are INT8,
+# partial sums 16 bit.
 #
-# 参数锚点：HAMMER (HPCA 2023, 28 nm, 16 TOPS / 1.5 MB SRAM, 32×{256×256} 宏)、
-# SpAtten (HPCA 2021)、Sanger (MICRO 2021)、Samsung HBM-PIM (ISSCC 2022)、
-# 近年 28 nm SRAM-CIM ISSCC 设计。
-#
-# 计算：16 cores × (64×32) bit-serial macro → 32768 bit-level MACs/cycle
-#       ÷ 8 bit-serial cycles = 4096 INT8×INT8 MACs/cycle @ 1 GHz → 32.77 TOPS
-# 片上 SRAM：4 MB GBuf + 16×(16 KB + 16 KB) = 4.5 MB 总容量
-# DRAM：4 GB @ 256 bit/cycle (LPDDR5x 级，匹配 32 TOPS 计算需求)
-#
-# 能耗/漏电字段由 transformer_spec() 在返回前统一通过 CACTI 重跑，**不要手工填 pJ 值**。
+# SRAM access energies and leakage were computed once with CACTI 7.0 and are
+# stored below, so this template does not need a CACTI build.
 
 from __future__ import annotations
 
-import copy
-from dataclasses import replace
-
 from Architecture.HardwareSpec import HardwareSpec
-from Architecture.templates.default import _DEFAULT_SPEC_DICT
 
 
-def _build_transformer_spec_dict() -> dict:
-    spec = copy.deepcopy(_DEFAULT_SPEC_DICT)
+_TRANSFORMER_SPEC_DICT = {'cores': 16,
+ 'cycle_time_ns': None,
+ 'leakage_per_cycle_nJ': 0.4719655086538611,
+ 'macro': {'dimX': 64,
+           'dimY': 32,
+           'input_bit_per_cycle': 1,
+           'precision': {'I': 8, 'W': 8, 'psum': 16, 'O_final': 8},
+           'logic_energies_pJ': {'mult_1b': 0.0002835,
+                                 'adder_1b': 0.003401999999999999,
+                                 'reg_1b': 0.0017009999999999996},
+           'tech_params': {'tech_node': 0.028,
+                           'vdd': 0.9,
+                           'nd2_cap': 0.0007,
+                           'xor2_cap': 0.0010499999999999997,
+                           'dff_cap': 0.0020999999999999994,
+                           'nd2_area': 6.14e-07,
+                           'xor2_area': 1.4736e-06,
+                           'dff_area': 3.6840000000000002e-06,
+                           'nd2_dly': 0.0478,
+                           'xor2_dly': 0.11472},
+           'spatial_axes': [{'name': 'cores',
+                             'size': 16,
+                             'allowed_loops': ['P', 'Q', 'K', 'G'],
+                             'source_memory_per_operand': {'I': 'Global_buffer',
+                                                           'W': 'Global_buffer',
+                                                           'O': 'Global_buffer'}},
+                            {'name': 'dimX',
+                             'size': 64,
+                             'allowed_loops': ['R', 'S', 'C'],
+                             'source_memory_per_operand': {'I': 'Input_buffer',
+                                                           'W': 'Global_buffer',
+                                                           'O': 'OReg'}},
+                            {'name': 'dimY',
+                             'size': 32,
+                             'allowed_loops': ['K'],
+                             'source_memory_per_operand': {'I': 'IReg',
+                                                           'W': 'Global_buffer',
+                                                           'O': 'Output_buffer'}}],
+           'compartment_depth': 8,
+           'weight_double_buffer': False},
+ 'memory_hierarchy': [{'name': 'Dram',
+                       'size_bits': 34359738368,
+                       'replication': 'shared_all_cores',
+                       'r_bw_bits_per_cycle': 256,
+                       'w_bw_bits_per_cycle': 256,
+                       'r_cost_per_bit_pJ': 7.91,
+                       'w_cost_per_bit_pJ': 7.91,
+                       'operands': ['I', 'W', 'O'],
+                       'served_dimensions_zigzag': 'all',
+                       'area_mm2': 0.0,
+                       'r_latency_cycles': 1,
+                       'w_latency_cycles': 1,
+                       'ports': {'r': 0, 'w': 0, 'rw': 1},
+                       'min_r_granularity_bits': 4,
+                       'min_w_granularity_bits': 4},
+                      {'name': 'Global_buffer',
+                       'size_bits': 33554432,
+                       'replication': 'shared_all_cores',
+                       'r_bw_bits_per_cycle': 512,
+                       'w_bw_bits_per_cycle': 512,
+                       'r_cost_per_bit_pJ': 0.4182283125,
+                       'w_cost_per_bit_pJ': 0.2767365,
+                       'operands': ['I', 'W', 'O'],
+                       'served_dimensions_zigzag': 'all',
+                       'area_mm2': 0.8022823,
+                       'r_latency_cycles': 1,
+                       'w_latency_cycles': 1,
+                       'ports': {'r': 0, 'w': 0, 'rw': 1},
+                       'min_r_granularity_bits': 8,
+                       'min_w_granularity_bits': 8},
+                      {'name': 'Output_buffer',
+                       'size_bits': 262144,
+                       'replication': 'per_core',
+                       'r_bw_bits_per_cycle': 256,
+                       'w_bw_bits_per_cycle': 256,
+                       'r_cost_per_bit_pJ': 0.03950850937500001,
+                       'w_cost_per_bit_pJ': 0.04694506875,
+                       'operands': ['O'],
+                       'served_dimensions_zigzag': [[0, 1, 0], [1, 0, 0]],
+                       'area_mm2': 0.0068512,
+                       'r_latency_cycles': 1,
+                       'w_latency_cycles': 1,
+                       'ports': {'r': 0, 'w': 0, 'rw': 1},
+                       'min_r_granularity_bits': 8,
+                       'min_w_granularity_bits': 8},
+                      {'name': 'Input_buffer',
+                       'size_bits': 131072,
+                       'replication': 'per_core',
+                       'r_bw_bits_per_cycle': 256,
+                       'w_bw_bits_per_cycle': 256,
+                       'r_cost_per_bit_pJ': 0.029533106250000007,
+                       'w_cost_per_bit_pJ': 0.032814871875,
+                       'operands': ['I'],
+                       'served_dimensions_zigzag': [[0, 1, 0], [1, 0, 0]],
+                       'area_mm2': 0.0068512,
+                       'r_latency_cycles': 1,
+                       'w_latency_cycles': 1,
+                       'ports': {'r': 0, 'w': 0, 'rw': 1},
+                       'min_r_granularity_bits': 8,
+                       'min_w_granularity_bits': 8},
+                      {'name': 'OReg',
+                       'size_bits': 16,
+                       'replication': 'per_core',
+                       'r_bw_bits_per_cycle': 16,
+                       'w_bw_bits_per_cycle': 16,
+                       'r_cost_per_bit_pJ': 0.0,
+                       'w_cost_per_bit_pJ': 0.0017009999999999996,
+                       'operands': ['O'],
+                       'served_dimensions_zigzag': [[0, 1, 0]],
+                       'area_mm2': 5.8944000000000003e-05,
+                       'r_latency_cycles': 1,
+                       'w_latency_cycles': 1,
+                       'ports': {'r': 0, 'w': 0, 'rw': 1},
+                       'min_r_granularity_bits': None,
+                       'min_w_granularity_bits': None},
+                      {'name': 'IReg',
+                       'size_bits': 8,
+                       'replication': 'per_core',
+                       'r_bw_bits_per_cycle': 8,
+                       'w_bw_bits_per_cycle': 8,
+                       'r_cost_per_bit_pJ': 0.0,
+                       'w_cost_per_bit_pJ': 0.0017009999999999996,
+                       'operands': ['I'],
+                       'served_dimensions_zigzag': [[1, 0, 0]],
+                       'area_mm2': 2.9472000000000002e-05,
+                       'r_latency_cycles': 1,
+                       'w_latency_cycles': 1,
+                       'ports': {'r': 0, 'w': 0, 'rw': 1},
+                       'min_r_granularity_bits': None,
+                       'min_w_granularity_bits': None},
+                      {'name': 'Macro',
+                       'size_bits': 64,
+                       'replication': 'per_core',
+                       'r_bw_bits_per_cycle': 8,
+                       'w_bw_bits_per_cycle': 8,
+                       'r_cost_per_bit_pJ': 0.0,
+                       'w_cost_per_bit_pJ': 0.02575,
+                       'operands': ['W'],
+                       'served_dimensions_zigzag': [],
+                       'area_mm2': 0.0,
+                       'r_latency_cycles': 0,
+                       'w_latency_cycles': 0,
+                       'ports': {'r': 0, 'w': 0, 'rw': 1},
+                       'min_r_granularity_bits': None,
+                       'min_w_granularity_bits': None}],
+ 'metadata': {'tech_node': '28nm',
+              'imc_family': 'digital_SRAM_IMC',
+              'notes': 'CIM_ACC_DEFAULT_SETUP_TRANSFORMER (2026-05-13): 16-core digital SRAM CIM, '
+                       '28nm, I=W=8b psum=16b, 64x32 macro, 4 MB GBuf, 16 KB IBuf / 32 KB OBuf per '
+                       'core, 4 GB DRAM @256 bit/cyc. Only OBuf differs from '
+                       'CIM_ACC_TEMPLATE_TRANSFORMER (16→32 KB per core, 1:2 ratio matching 8b/16b '
+                       'width asymmetry).'}}
 
-    # === 计算轴 ===
-    spec["cores"] = 16
-    spec["macro"]["dimX"] = 64
-    spec["macro"]["dimY"] = 32
-    for axis in spec["macro"]["spatial_axes"]:
-        if axis["name"] == "cores":
-            axis["size"] = 16
-        elif axis["name"] == "dimX":
-            axis["size"] = 64
-        elif axis["name"] == "dimY":
-            axis["size"] = 32
 
-    # === 存储层级 ===
-    # DRAM: 4 GB @ 256 bit/cycle
-    # Global_buffer: 4 MB @ 512 bit/cycle
-    # I/O buffer (per core): 16 KB @ 256 bit/cycle
-    # OReg/IReg/Macro size_bits 保持原值（per-cell 位宽语义，不随 macro 维度换算）
-    _SIZE_OVERRIDES = {
-        "Dram":           {"size_bits": 4 * 8 * (1024 ** 3), "r_bw_bits_per_cycle": 256, "w_bw_bits_per_cycle": 256},
-        "Global_buffer":  {"size_bits": 4 * 8 * (1024 ** 2), "r_bw_bits_per_cycle": 512, "w_bw_bits_per_cycle": 512},
-        "Output_buffer":  {"size_bits": 16 * 8 * 1024,        "r_bw_bits_per_cycle": 256, "w_bw_bits_per_cycle": 256},
-        "Input_buffer":   {"size_bits": 16 * 8 * 1024,        "r_bw_bits_per_cycle": 256, "w_bw_bits_per_cycle": 256},
-    }
-    for mem in spec["memory_hierarchy"]:
-        if mem["name"] in _SIZE_OVERRIDES:
-            mem.update(_SIZE_OVERRIDES[mem["name"]])
-
-    # 元数据
-    spec["metadata"] = dict(spec["metadata"])
-    spec["metadata"]["notes"] = (
-        "HW-Transformer: 16-core digital SRAM CIM, 28nm, I=W=8b psum=16b, "
-        "scaled for ViT/BERT-Base (16 cores, 64x32 macro, 4 MB GBuf, 16 KB IO buffer, 4 GB DRAM)"
-    )
-
-    return spec
-
-
-def transformer_spec() -> HardwareSpec:
-    """返回 HW-Transformer 配置的 HardwareSpec；所有 SRAM 能耗/漏电走 CACTI。"""
-    # 延迟导入避免循环依赖 (HardwareVariants 自身导入 HardwareSpec / CACTI wrapper)
-    from Architecture.HardwareVariants import (
-        _recompute_memory_cost_pJ,
-        _leakage_per_cycle_nJ,
-    )
-
-    spec = HardwareSpec.from_dict(_build_transformer_spec_dict())
-
-    # DRAM 保持 7.91 pJ/bit legacy；OReg/IReg/Macro 走 spec 里的原始固定值
-    # （OReg/IReg 静态能耗=0 符合 flop-level 寄存器语义）。
-    # 对 Global_buffer / Input_buffer / Output_buffer 三个 SRAM 层，重跑 CACTI。
-    cacti_levels = ("Global_buffer", "Input_buffer", "Output_buffer")
-    refreshed_mems = []
-    for m in spec.memory_hierarchy:
-        if m.name in cacti_levels:
-            updated = _recompute_memory_cost_pJ(spec, m.name)
-            refreshed_mems.append(replace(
-                m,
-                r_cost_per_bit_pJ=updated.r_cost_per_bit_pJ,
-                w_cost_per_bit_pJ=updated.w_cost_per_bit_pJ,
-            ))
-        else:
-            refreshed_mems.append(m)
-    spec = replace(spec, memory_hierarchy=refreshed_mems)
-
-    # 总漏电按新 spec 累加 (DRAM + GBuf + per-core SRAM × cores + Macro × cores)
-    spec = replace(spec, leakage_per_cycle_nJ=_leakage_per_cycle_nJ(spec))
-
-    return spec
-
-
-default_spec = transformer_spec
+def default_spec() -> HardwareSpec:
+    return HardwareSpec.from_dict(_TRANSFORMER_SPEC_DICT)

@@ -365,33 +365,32 @@ class tranSimulator():
     # 每层 `for i in range(N)` 展开后 leaf 调用数会放大成全部 MAC 事件数（VGG 单层
     # 可到 1e9 量级），原 tile-walk `loopExecution` 会跑数小时。
     #
-    # 策略：对每个非叶层 loopExecution(loopidx) 的 N 次循环做如下等价展开
-    #   iter0 显式执行（跳过 `if i > 0` 分支）
-    #   iter1 显式执行（带 `if i > 0` 分支）
-    #   iter2 显式执行；记录 (状态before→after) 作稳态 delta
-    #   对 (N-3) 次追加迭代按稳态 delta 线性累加
-    #   flush（若 dflag[O]==1）
-    # 其中 iter0/iter1/iter2 都递归调用 `loopExecutionAnalytical(loopidx+1)`，
-    # 因此 child 每层被调用 3 次。总调用复杂度  O(3^len(tm))，对典型 baseline
-    # （len(tm) ≤ ~15）在秒级。
-    #
-    # 为什么需要 3 个显式 iter（而非 2 个）：
-    #   iter0 消化初始 transient；iter1 消化 child analytical 内部 max-absorb 的
-    #   次级 transient（child 对两次不同 entry 的 inner iter0 可能产生不同 delta，
-    #   它在 parent 眼中表现为 iter1 delta ≠ iter2 delta）。iter2 及以后 entry
-    #   pattern 稳定，child delta 固定，可做线性外推。
-    #
-    # bit-exact 前提（与 run() 逐字段一致）：
-    #   (a) pre-read 累加项（transfer_cycles / mode_switch / mismatch / memCost）
-    #       每迭代贡献恒定，直接线性 × (N-3)。
-    #   (b) `if i > 0` 分支（lines 297-312 in run()）从 iter1 起每轮执行一次；
-    #       它已包含在 iter1/iter2 body 内。
-    #   (c) flush（lines 339-355，仅 dflag[O]==1）在 N 次循环之后执行一次。
-    #   (d) timer 的 `max(t, t_nxt)` 递推从 iter2 起达到稳态 delta。
-    # 若某种特殊 mapping 破坏 (d)，会在 Verify_simulax_equivalence 上暴露为非 bit-exact
-    # — 当作 bug 修复而不是近似。能耗/memCost 因浮点累加顺序会有 ≤1e-12 相对误差，属
-    # 可接受的 FP 噪声而非语义偏差。
+    # A fixed three-iteration extrapolation is not exact when the transient
+    # lasts longer than two iterations. Only skip iterations after ALL
+    # timer coordinates read by the repeated body advance by one common shift.
+    # The body uses additions, max and timer differences, so it is translation
+    # equivariant on these coordinates; equal relative state proves that every
+    # following iteration has the same timing/profile increment. Otherwise keep
+    # executing. This conservative guard may sacrifice acceleration, not accuracy.
     # ------------------------------------------------------------------
+
+    def _analytical_active_timers(self, loopidx):
+        if not hasattr(self, "_analytical_timer_cache"):
+            self._analytical_timer_cache = {}
+        if loopidx not in self._analytical_timer_cache:
+            mac = self.acc.Num_mem
+            keys = {(mac, op) for op in range(3)}
+            for op in range(3):
+                upper = self.dataflow.uppermem[mac, op]
+                if self.dataflow.usr_defined_double_flag[upper][op] == 0:
+                    keys.add((upper, op))
+            for mapping in self.dataflow.tm[loopidx:]:
+                for op in range(3):
+                    cur = mapping.mem[op]
+                    keys.add((cur, op))
+                    keys.add((self.dataflow.nxtmem[cur, op], op))
+            self._analytical_timer_cache[loopidx] = keys
+        return self._analytical_timer_cache[loopidx]
 
     def loopExecutionAnalytical(self, loopidx:int):
         uppmem = self.dataflow.uppermem
@@ -464,26 +463,29 @@ class tranSimulator():
             )
             return
 
-        # === iter 2 === snapshot 在前，取 iter2 delta 作为稳态（由 iter1 已收敛到稳定
-        # 的相对 gap；iter2 的 max-pattern 与 iter1 相同，作为线性外推基准）
-        snap_timer = dict(self.timer)
-        snap_mem_r = {m: self.memCost[m].r for m in self.memCost}
-        snap_mem_w = {m: self.memCost[m].w for m in self.memCost}
-        snap_mem_t = {m: self.memCost[m].t for m in self.memCost}
-        snap_tc = list(self.PD.transfer_cycles)
-        snap_ms = list(self.PD.mismatch_cycles)
-        snap_mode = list(self.PD.mode_switch_cycles)
-        snap_owb = self.PD.output_writeback_cycles
-        snap_cm = self.count_mac
+        active_timers = self._analytical_active_timers(loopidx)
+        scale = 0
+        for iteration in range(2, N):
+            snap_timer = dict(self.timer)
+            snap_mem_r = {m: self.memCost[m].r for m in self.memCost}
+            snap_mem_w = {m: self.memCost[m].w for m in self.memCost}
+            snap_mem_t = {m: self.memCost[m].t for m in self.memCost}
+            snap_tc = list(self.PD.transfer_cycles)
+            snap_ms = list(self.PD.mismatch_cycles)
+            snap_mode = list(self.PD.mode_switch_cycles)
+            snap_owb = self.PD.output_writeback_cycles
+            snap_cm = self.count_mac
+            self._analytical_iter_body(
+                loopidx=loopidx, i_gt_0=True,
+                mem_cur=mem_cur, mem_nxt=mem_nxt,
+                tileSize=tileSize, nxtSize=nxtSize,
+                Cons=Cons, dflag=dflag,
+            )
+            shifts = {self.timer[k]-snap_timer[k] for k in active_timers}
+            if len(shifts) == 1:
+                scale = N-iteration-1
+                break
 
-        self._analytical_iter_body(
-            loopidx=loopidx, i_gt_0=True,
-            mem_cur=mem_cur, mem_nxt=mem_nxt,
-            tileSize=tileSize, nxtSize=nxtSize,
-            Cons=Cons, dflag=dflag,
-        )
-
-        scale = N - 3
         if scale > 0:
             for k in snap_timer:
                 self.timer[k] += scale * (self.timer[k] - snap_timer[k])

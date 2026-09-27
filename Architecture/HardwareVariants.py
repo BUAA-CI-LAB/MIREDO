@@ -243,7 +243,20 @@ def set_compartment_depth(spec: HardwareSpec, depth: int) -> HardwareSpec:
     return new_spec
 
 
+def set_macro_weight_double_buffer(spec: HardwareSpec, enabled) -> HardwareSpec:
+    """Toggle the ping-pong-capable macro weight store.
+
+    Only ``macro.weight_double_buffer`` changes; compartment_depth, array size,
+    energies and leakage are kept, so two weight tiles share the same store.
+    """
+    flag = str(enabled).strip().lower() in ("1", "true", "yes", "on")
+    new_macro = replace(spec.macro, weight_double_buffer=flag)
+    return replace(spec, macro=new_macro)
+
+
 def build_hardware_variant(spec: HardwareSpec, parameter: str, value) -> HardwareSpec:
+    if parameter == "macro_weight_double_buffer":
+        return set_macro_weight_double_buffer(spec, value)
     if parameter == "core_count":
         return set_core_count(spec, int(value))
     if parameter == "buffer_capacity":

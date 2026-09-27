@@ -7,7 +7,7 @@ import uuid
 from utils.UtilsFunction.OnnxParser import extract_loopdims
 from utils.UtilsFunction.ToolFunction import prepare_save_dir
 from Architecture.ArchSpec import CIM_Acc
-from Architecture.templates.default import default_spec
+from importlib import import_module
 import time, copy
 
 
@@ -19,8 +19,8 @@ def normalize_loopdim_for_solver(loopdim):
     return normalized
 
 
-def make_accelerator():
-    spec = default_spec()
+def make_accelerator(architecture="default"):
+    spec = import_module(f"Architecture.templates.{architecture}").default_spec()
     return CIM_Acc.from_spec(spec)
 
 
@@ -38,10 +38,13 @@ def get_Args():
 
     parser.add_argument('-m', '--model', dest='model', required=False,
                         type=str, default='resnet18', help='NN model Name')
+    parser.add_argument('-a', '--architecture', dest='architecture', choices=["default", "transformer"], required=False,
+                        type=str, default="default", help='hardware template in Architecture/templates')
+    parser.add_argument("--matmul", nargs="?", const=True, default=False, help="also map MatMul/Gemm layers (Transformer models)")
     parser.add_argument('-log', '--log_file', dest='log', required=False,
                         type=str, default='miredo.log', help='Log file Name')
     parser.add_argument('-opt', '--flag_opt', dest='opt', choices=["Latency", "Energy", "EDP"], required=False,
-                        type=str, default="Feasible", help='Optimization: Feasible, Latency, Energy, EDP')
+                        type=str, default="EDP", help='Optimization objective: Latency, Energy, EDP')
     parser.add_argument('-f', '--mipFocus', dest='mipFocus', choices=[0, 1, 2, 3], required=False,
                         type=int, default=1, help='0=balanced, 1=feasibility, 2=optimality, 3=best bound')
     parser.add_argument('-class', '--num_classes', dest='classes', choices=[10, 1000], required=False,
@@ -75,14 +78,17 @@ def __main__(**kwargs):
     FLAG.DEBUG_PER_LAYER_DETAIL = False
 
     Logger.info("* " * 50)
-    Logger.info(f"model={args.model}, Optimization_Flag={CONST.FLAG_OPT}, MIPFOCUS={CONST.MIPFOCUS}")
+    Logger.info(f"model={args.model}, architecture={args.architecture}, Optimization_Flag={CONST.FLAG_OPT}, MIPFOCUS={CONST.MIPFOCUS}")
     Logger.info("* " * 50)
 
     model = f"model/{args.model}.onnx"
-    convs, loopdims = extract_loopdims(model)
+    try:
+        convs, loopdims = extract_loopdims(model, allow_matmul=args.matmul)
+    except RuntimeError as err:
+        raise SystemExit(f"{err}\nTransformer models need --matmul.")
     assert len(convs) == len(loopdims)
 
-    accelerator_template = make_accelerator()
+    accelerator_template = make_accelerator(args.architecture)
     total_latency, total_energy = 0, 0
 
     for i, (Conv, loopdim) in enumerate(zip(convs, loopdims)):

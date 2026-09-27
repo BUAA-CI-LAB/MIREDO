@@ -200,8 +200,35 @@ class LoopNest():
         self.nxtmem = nxtmem
         self.uppermem = uppermem
 
+        output_mems = [m for m in range(1, self.acc.Num_mem) if self.acc.mappingArray[2][m] == 1]
+        if self.psum_flag is None:      # derived on the nest as given, before reuse anchoring below
+            ir_at_mem = {}
+            for mapping in tm:
+                if self.ops.relevance[2][mapping.dim] == 0 and mapping.dimSize > 1:
+                    ir_at_mem[mapping.mem[2]] = True
+
+            psum_flag = {}
+            has_ir_outer = False
+            for m in output_mems:
+                if ir_at_mem.get(m, False):
+                    has_ir_outer = True
+                psum_flag[m] = has_ir_outer
+            self.psum_flag = psum_flag
+
+        # Storage-to-storage transfers fire once per change of the child tile, i.e. per
+        # iteration of the innermost loop at or above the level that is relevant to the
+        # operand with size > 1. When no such loop sits in the level itself, the rule
+        # below would attach the transfer to the level's outermost loop and resend an
+        # unchanged tile on every iteration. Rewrite the nest into the equivalent form
+        # that fires at the right place: a size-1 anchor loop right under that loop,
+        # with the irrelevant loops in between moved to the level for this operand
+        # (tile sizes unchanged). Operands whose level sequence is not monotone are left
+        # as given; transfers into the compute unit keep their per-iteration rule.
+        if self._anchor_reuse(nxtmem):
+            return self.preprogress()
+
         xMem = {}
-        for op, op_name in enumerate(['I','W','O']):    
+        for op, op_name in enumerate(['I','W','O']):
             for i in range(len(tm)-1):
                 if self.acc.mappingArray[op][tm[i].mem[op]] == 1:
                     if tm[i+1].mem[op] == nxtmem[tm[i].mem[op],op]:
@@ -215,30 +242,19 @@ class LoopNest():
                         if tm[j].mem[op] != tm[i].mem[op]:
                             j += 1
                             break
-                        elif self.ops.relevance[op][tm[j].dim] == 0:
+                        elif not self._relevant(op, tm[j]):
                             xMem[j,op] = 0
                         else:
                             break
                     xMem[j,op] = 1
+            for s, e, m in self._storage_blocks(op, nxtmem):
+                for j in range(s, e+1):
+                    xMem[j,op] = 0
+                xMem[max(j for j in range(s, e+1) if self._changes_tile(op, tm[j])),op] = 1
         for i in range(len(tm)):
             if tm[i].mem[1] == self.acc.Macro2mem:
                 xMem[i,1] = 0
         self.xMem = xMem
-
-        output_mems = [m for m in range(1, self.acc.Num_mem) if self.acc.mappingArray[2][m] == 1]
-        if self.psum_flag is None:
-            ir_at_mem = {}
-            for mapping in tm:
-                if self.ops.relevance[2][mapping.dim] == 0 and mapping.dimSize > 1:
-                    ir_at_mem[mapping.mem[2]] = True
-
-            psum_flag = {}
-            has_ir_outer = False
-            for m in output_mems:
-                if ir_at_mem.get(m, False):
-                    has_ir_outer = True
-                psum_flag[m] = has_ir_outer
-            self.psum_flag = psum_flag
 
         for m in output_mems:
             self.psum_flag.setdefault(m, False)
@@ -260,6 +276,49 @@ class LoopNest():
             if unrollingSize[i] < self.ops.dim2bound[i]:
                 Logger.error(self.__repr__())
                 raise ValueError(f"Dimension {self.ops.dim2Dict[i]}({self.ops.dim2bound[i]}) unrolling not fully({unrollingSize[i]}) in LoopNest")
+
+    def _relevant(self, op, mapping):
+        anchor = getattr(mapping, "anchor", None)   # an anchor loop belongs to one operand only
+        if anchor is not None:
+            return anchor == op
+        return self.ops.relevance[op][mapping.dim] != 0
+
+    def _changes_tile(self, op, mapping):
+        if getattr(mapping, "anchor", None) is not None:
+            return mapping.anchor == op
+        return self.ops.relevance[op][mapping.dim] != 0 and mapping.dimSize > 1
+
+    def _storage_blocks(self, op, nxtmem):
+        """(start, end, mem) of each level of `op` whose transfer goes to another storage level."""
+        seq = [mapping.mem[op] for mapping in self.tm]
+        if any(seq[i] > seq[i+1] for i in range(len(seq)-1)):
+            return []
+        blocks, s = [], 0
+        for i in range(1, len(seq)+1):
+            if i == len(seq) or seq[i] != seq[s]:
+                m = seq[s]
+                if nxtmem[m,op] < self.acc.Num_mem and not (op == 1 and m == self.acc.Macro2mem):
+                    blocks.append((s, i-1, m))
+                s = i
+        return blocks
+
+    def _anchor_reuse(self, nxtmem):
+        """Insert one reuse anchor where a storage level lacks its tile-changing loop; True if the nest changed."""
+        tm = self.tm
+        for op in range(3):
+            for s, e, m in self._storage_blocks(op, nxtmem):
+                f = max((j for j in range(e+1) if self._changes_tile(op, tm[j])), default=-1)
+                if f >= s:
+                    continue
+                for j in range(f+1, s):
+                    tm[j].mem = list(tm[j].mem)
+                    tm[j].mem[op] = m
+                anchor = Mapping(dim=self.ops.dim2Dict.index('C' if op == 0 else 'K'), dimSize=1, mem=list(tm[f+1].mem))
+                anchor.mem[op] = m
+                anchor.anchor = op
+                tm.insert(f+1, anchor)
+                return True
+        return False
 
     def __repr__(self) -> str:
         pstr = ""

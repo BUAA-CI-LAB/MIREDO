@@ -126,7 +126,10 @@ class CIM_Acc():
 
         self.lastMem = {0: self.IReg2mem, 1: self.Macro2mem, 2: self.OReg2mem}
 
-        self.double_Macro = 0
+        # Macro weight double buffering: 0 = mutually exclusive memory/compute
+        # modes (default); 1 = ping-pong-capable weight store, exposed through
+        # double_config to the MIP and the simulator.
+        self.double_Macro = 1 if bool(getattr(spec.macro, "weight_double_buffer", False)) else 0
         self.double_config = [[0 for _ in range(3)] for _ in range(self.Num_mem)]
         for m in range(1, self.Num_mem):
             for op in range(3):
