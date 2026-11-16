@@ -1,14 +1,3 @@
-# Transformer hardware template: 16-core digital SRAM-CIM accelerator at 28 nm.
-#
-# Each core holds one 64x256 macro array (64 rows x 32 INT8 weight columns)
-# with a storage-to-compute ratio of 8:1, a 16 KB input buffer and a 32 KB
-# output buffer (256 bit/cycle). The cores share a 4 MB global buffer
-# (512 bit/cycle) and 4 GB of DRAM (256 bit/cycle). Inputs and weights are INT8,
-# partial sums 16 bit.
-#
-# SRAM access energies and leakage were computed once with CACTI 7.0 and are
-# stored below, so this template does not need a CACTI build.
-
 from __future__ import annotations
 
 from Architecture.HardwareSpec import HardwareSpec

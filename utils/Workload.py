@@ -1,7 +1,3 @@
-# this file is prepared for project 026
-# Created by iboxl
-# Modified in project 112
-
 import math
 from utils.UtilsFunction.ToolFunction import getDivisors
 from Architecture.ArchSpec import CIM_Acc
@@ -12,30 +8,28 @@ class Operand():
     def __init__(self):
         self.bitwidth :int = None
 
-class Operands():   
+class Operands():
     def __init__(self, config, ori_M:int, ori_K:int, ori_N:int, multi:int=1):
-        
+
         self.dim_M = ori_M
         self.dim_K = ori_K
         self.dim_N = ori_N
         self.multi = multi
-        # GEMM: [M, K]x[K, N]
         self.weight = Operand()
         self.input = Operand()
         self.output = Operand()
 
-        self.weight.bitwidth = config.getint("Workload", "weight_bit_width")  
-        self.input.bitwidth = config.getint("Workload", "input_bit_width")  
-        # """     放在计算内部求得 ?
+        self.weight.bitwidth = config.getint("Workload", "weight_bit_width")
+        self.input.bitwidth = config.getint("Workload", "input_bit_width")
         if self.weight.bitwidth == 8 and self.input.bitwidth == 8 :
             self.output.bitwidth = int(math.pow(2, math.ceil(math.log2(
                 (self.weight.bitwidth + self.input.bitwidth) + math.ceil(math.log(ori_K, 2))
-            )))   )               #  位数保持为2的x次方
+            )))   )
         else:
             self.output.bitwidth = (self.weight.bitwidth + self.input.bitwidth) + math.ceil(math.log(5000, 2))
-    
+
     def exchange(self):
-        
+
         tmp = self.dim_M
         self.dim_M = self.dim_N
         self.dim_N = tmp
@@ -46,7 +40,7 @@ class Operands():
 
         return self
 
-class WorkLoad(): 
+class WorkLoad():
     def __init__(self, loopDim):
         self.weight = Operand()
         self.input = Operand()
@@ -62,10 +56,10 @@ class WorkLoad():
 
         self.Num_dim = len(self.dim2Dict)
 
-        self.relevance = [      # relevance[t][dim]
-            [0,1,1,1,1,1,0,1],      # Input
-            [0,1,1,0,0,1,1,1],      # weight
-            [0,0,0,1,1,0,1,1]       # Output
+        self.relevance = [
+            [0,1,1,1,1,1,0,1],
+            [0,1,1,0,0,1,1,1],
+            [0,0,0,1,1,0,1,1]
         ]
 
         self.Divisors = [getDivisors(d) for d in self.dim2bound]
@@ -76,9 +70,9 @@ class WorkLoad():
         for dim in range(1, self.Num_dim):
             Num_MAC *= self.dim2bound[dim]
         self.Num_MAC = Num_MAC
-        
+
         assert self.P == (self.H + 2 * self.Padding - self.R)//self.Stride + 1
-        assert self.Q == (self.W + 2 * self.Padding - self.S)//self.Stride + 1 
+        assert self.Q == (self.W + 2 * self.Padding - self.S)//self.Stride + 1
 
     def _get_input_extent(self, output_size, kernel_size, input_bound):
         unique_extent = kernel_size + (output_size - 1) * min(self.Stride, kernel_size)
@@ -115,12 +109,11 @@ class WorkLoad():
                 dim_size[self.dict2Dim('G')]
             )
         raise ValueError(f"Unsupported operand index: {op}")
-    
+
     def dict2Dim(self, dimChar):
         try:
             return self.dim2Dict.index(dimChar)
         except ValueError:
-            # 如果字符不在列表中，返回一个错误提示或特殊值
             raise ValueError("Error dim char")
 
     def __repr__(self):
@@ -139,14 +132,14 @@ class LoopNest():
         self.acc = acc
         self.ops = ops
 
-        self.tm:list[Mapping] = [] # Temporal Mapping List from outer to inner 
+        self.tm:list[Mapping] = []
 
-        self.sm:list[Mapping] = [] # yin
+        self.sm:list[Mapping] = []
 
         self.usr_defined_double_flag = None
         self.psum_flag = None
-        
-    
+
+
     def preprogress(self):
         unrollingSize = [1 for _ in self.ops.dim2Dict]
         for mapping in self.tm+self.sm:
@@ -159,13 +152,13 @@ class LoopNest():
                 raise ValueError(f"Illegal dimension {self.ops.dim2Dict[mapping.dim]} bound in LoopNest")
             unrollingSize[mapping.dim] *= mapping.dimSize
 
-            
+
         if len(self.usr_defined_double_flag) != self.acc.Num_mem+1:
             raise ValueError("Mismatch with usr_difined_double_flag")
 
         tm = self.tm
 
-        bypassMem = [[1 for op in range(3)] for _ in range(self.acc.Num_mem+1)]    # bypass[mem][op]
+        bypassMem = [[1 for op in range(3)] for _ in range(self.acc.Num_mem+1)]
         for mapping in tm:
             for op, op_name in enumerate(['I','W','O']):
                 bypassMem[mapping.mem[op]][op] = 0
@@ -175,15 +168,11 @@ class LoopNest():
         uppermem = {}
         for op, op_name in enumerate(['I','W','O']):
             for i in range(len(tm)-1):
-                # nxtmem[i,op] = acc.Num_mem
                 for j in range(i+1,len(tm)):
                     if tm[i].mem[op] < tm[j].mem[op]:
                         nxtmem[tm[i].mem[op],op] = tm[j].mem[op]
                         break
             nxtmem[tm[-1].mem[op],op] = self.acc.Num_mem
-        # Safety net: orphan levels (used but lack a strict greater successor
-        # and not equal to tm[-1].mem[op]) get promoted to DRAM-equivalent.
-        # MIREDO's own mappings never trigger this; adapter-produced tm may.
         for op, op_name in enumerate(['I','W','O']):
             for mem in range(self.acc.Num_mem+1):
                 if bypassMem[mem][op] == 0 and (mem, op) not in nxtmem:
@@ -201,7 +190,7 @@ class LoopNest():
         self.uppermem = uppermem
 
         output_mems = [m for m in range(1, self.acc.Num_mem) if self.acc.mappingArray[2][m] == 1]
-        if self.psum_flag is None:      # derived on the nest as given, before reuse anchoring below
+        if self.psum_flag is None:
             ir_at_mem = {}
             for mapping in tm:
                 if self.ops.relevance[2][mapping.dim] == 0 and mapping.dimSize > 1:
@@ -215,15 +204,6 @@ class LoopNest():
                 psum_flag[m] = has_ir_outer
             self.psum_flag = psum_flag
 
-        # Storage-to-storage transfers fire once per change of the child tile, i.e. per
-        # iteration of the innermost loop at or above the level that is relevant to the
-        # operand with size > 1. When no such loop sits in the level itself, the rule
-        # below would attach the transfer to the level's outermost loop and resend an
-        # unchanged tile on every iteration. Rewrite the nest into the equivalent form
-        # that fires at the right place: a size-1 anchor loop right under that loop,
-        # with the irrelevant loops in between moved to the level for this operand
-        # (tile sizes unchanged). Operands whose level sequence is not monotone are left
-        # as given; transfers into the compute unit keep their per-iteration rule.
         if self._anchor_reuse(nxtmem):
             return self.preprogress()
 
@@ -236,7 +216,7 @@ class LoopNest():
                     else:
                         xMem[i,op] = 0
             xMem[len(tm)-1,op] = 1
-            for i in range(len(tm)-1,-1,-1):            # fix bottem-ir reuse
+            for i in range(len(tm)-1,-1,-1):
                 if xMem[i,op] == 1:
                     for j in range(i,-1,-1):
                         if tm[j].mem[op] != tm[i].mem[op]:
@@ -272,13 +252,13 @@ class LoopNest():
 
         for i,_ in enumerate(self.ops.dim2Dict):
             if abs(unrollingSize[i]-self.ops.dim2bound[i]) > 1:
-                Logger.warning(f"Dataflow LoopNest used greedy mapping ({unrollingSize[i]}) for dimension {self.ops.dim2Dict[i]}({self.ops.dim2bound[i]})")  
+                Logger.warning(f"Dataflow LoopNest used greedy mapping ({unrollingSize[i]}) for dimension {self.ops.dim2Dict[i]}({self.ops.dim2bound[i]})")
             if unrollingSize[i] < self.ops.dim2bound[i]:
                 Logger.error(self.__repr__())
                 raise ValueError(f"Dimension {self.ops.dim2Dict[i]}({self.ops.dim2bound[i]}) unrolling not fully({unrollingSize[i]}) in LoopNest")
 
     def _relevant(self, op, mapping):
-        anchor = getattr(mapping, "anchor", None)   # an anchor loop belongs to one operand only
+        anchor = getattr(mapping, "anchor", None)
         if anchor is not None:
             return anchor == op
         return self.ops.relevance[op][mapping.dim] != 0
@@ -289,7 +269,6 @@ class LoopNest():
         return self.ops.relevance[op][mapping.dim] != 0 and mapping.dimSize > 1
 
     def _storage_blocks(self, op, nxtmem):
-        """(start, end, mem) of each level of `op` whose transfer goes to another storage level."""
         seq = [mapping.mem[op] for mapping in self.tm]
         if any(seq[i] > seq[i+1] for i in range(len(seq)-1)):
             return []
@@ -303,7 +282,6 @@ class LoopNest():
         return blocks
 
     def _anchor_reuse(self, nxtmem):
-        """Insert one reuse anchor where a storage level lacks its tile-changing loop; True if the nest changed."""
         tm = self.tm
         for op in range(3):
             for s, e, m in self._storage_blocks(op, nxtmem):
@@ -351,7 +329,3 @@ class LoopNest():
         if op == 2:
             return self.get_output_precision(mem)
         return self.acc.precision[mem, op]
-
-
-
-        

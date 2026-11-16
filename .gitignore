@@ -17,3 +17,9 @@ model/*
 **cache**
 
 output/*
+
+# Optional upstream baseline dependencies and generated mapper outputs.
+Evaluation/Zigzag_imc/zigzag-imc/
+Evaluation/CIMLoop/cimloop/
+Evaluation/CIMLoop/timeloop-accelergy-infra/
+Evaluation/**/output/

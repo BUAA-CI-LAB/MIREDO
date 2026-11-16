@@ -1,7 +1,3 @@
-#  this file is prepared for project 419
-#  Created by iboxl
-#  Modified in project 112
-
 from utils.Workload import WorkLoad, LoopNest
 from Architecture.ArchSpec import CIM_Acc
 import math
@@ -12,7 +8,7 @@ from dataclasses import dataclass, field
 class TransCost():
     r:float
     w:float
-    t:int       
+    t:int
 
 @dataclass
 class ProfilingDetail():
@@ -37,8 +33,8 @@ class ProfilingDetail():
     idle_cycles:float = 0
     count_mac: int = 0
     peak_mac_per_cycle: int = 0
-    bytes_read: list = field(default_factory=list)    # per memory level, in bytes
-    bytes_written: list = field(default_factory=list) # per memory level, in bytes
+    bytes_read: list = field(default_factory=list)
+    bytes_written: list = field(default_factory=list)
 
 class tranSimulator():
     def __init__(self, acc:CIM_Acc, ops:WorkLoad, dataflow:LoopNest, DEBUG_SIMU=False):
@@ -49,12 +45,9 @@ class tranSimulator():
         self.DEBUG_SIMU = DEBUG_SIMU
 
         self.dataflow.preprogress()
-        # print(self.dataflow)
         Logger.info(self.dataflow)
 
-        # dim_tp[mem][t][dim]   
         dim_tp = [ [ [ 1 for dim in range(ops.Num_dim)] for t in range(3) ] for mem in range(acc.Num_mem)]
-        # dim_sp[mem][t][dim]
         dim_sp = [ [ [ 1 for dim in range(ops.Num_dim)] for t in range(3) ] for mem in range(acc.Num_mem)]
         for mem in range(1,acc.Num_mem):
             for op, op_name in enumerate(['I','W','O']):
@@ -65,13 +58,13 @@ class tranSimulator():
                     if mem <= mapping.mem[op] and acc.mappingArray[op][mem]==1:
                         dim_sp[mem][op][mapping.dim] *= mapping.dimSize
         self.dim_tp, self.dim_sp = dim_tp, dim_sp
-        
+
         dataSize = {}
         tmp_dim = [_ for _ in range(ops.Num_dim)]
         for op, op_name in enumerate(['I','W','O']):
             dataSize[acc.Num_mem, op] = 1
         for mem in range(1,acc.Num_mem):
-            op = 0  # Input
+            op = 0
             for dim in range(1,ops.Num_dim):
                 tmp_dim[dim] = dim_sp[mem][op][dim] * dim_tp[mem][op][dim]
             if acc.mappingArray[op][mem]:
@@ -79,7 +72,7 @@ class tranSimulator():
             else:
                 dataSize[mem,op] = 0
 
-            op = 1  # Weight
+            op = 1
             for dim in range(1,ops.Num_dim):
                 tmp_dim[dim] = dim_sp[mem][op][dim] * dim_tp[mem][op][dim]
             if acc.mappingArray[op][mem]:
@@ -87,7 +80,7 @@ class tranSimulator():
             else:
                 dataSize[mem,op] = 0
 
-            op = 2  # Output
+            op = 2
             for dim in range(1,ops.Num_dim):
                 tmp_dim[dim] = dim_sp[mem][op][dim] * dim_tp[mem][op][dim]
             if acc.mappingArray[op][mem]:
@@ -98,8 +91,8 @@ class tranSimulator():
             for mem in range(1,acc.Num_mem):
                 if self.dataflow.bypassMem[mem][op]:
                     dataSize[mem,op] = 0
-        
-        Logger.info(f"Utilization:") 
+
+        Logger.info(f"Utilization:")
         for mem in range(1,acc.Num_mem):
             sum_mem = 0
             for op, op_name in enumerate(['I','W','O']):
@@ -115,26 +108,24 @@ class tranSimulator():
                 Logger.info('-'*4 + f" {acc.mem2dict(mem)}({round(sum_mem/acc.memSize[mem]*100,2):>3}%): {sum_mem}/{acc.memSize[mem]} - {acc.bw[mem]} bit/cc")
         self.dataSize = dataSize
 
-        # dim_tp[mem][t][dim]   
         trans_dim_tp = [ [ [ 1 for dim in range(ops.Num_dim)] for t in range(3) ] for mem in range(acc.Num_mem)]
-        # dim_sp[mem][t][dim]
         trans_dim_sp = [ [ [ 1 for dim in range(ops.Num_dim)] for t in range(3) ] for mem in range(acc.Num_mem)]
         for mem in range(1,acc.Num_mem):
             for op, op_name in enumerate(['I','W','O']):
                 for mapping in dataflow.tm:
-                    if mem < mapping.mem[op] and acc.mappingArray[op][mem]==1:        #  <= -> <
+                    if mem < mapping.mem[op] and acc.mappingArray[op][mem]==1:
                         trans_dim_tp[mem][op][mapping.dim] *= mapping.dimSize
                 for mapping in dataflow.sm:
                     if mem <= mapping.mem[op] and acc.mappingArray[op][mem]==1:
                         trans_dim_sp[mem][op][mapping.dim] *= mapping.dimSize
         self.trans_dim_tp, self.trans_dim_sp = trans_dim_tp, trans_dim_sp
-        
+
         tileSize = {}
         tmp_dim = [_ for _ in range(ops.Num_dim)]
         for op, op_name in enumerate(['I','W','O']):
             tileSize[acc.Num_mem, op] = 1
         for mem in range(1,acc.Num_mem):
-            op = 0  # Input
+            op = 0
             for dim in range(1,ops.Num_dim):
                 tmp_dim[dim] = trans_dim_sp[mem][op][dim] * trans_dim_tp[mem][op][dim]
             if acc.mappingArray[op][mem]:
@@ -142,7 +133,7 @@ class tranSimulator():
             else:
                 tileSize[mem,op] = 0
 
-            op = 1  # Weight
+            op = 1
             for dim in range(1,ops.Num_dim):
                 tmp_dim[dim] = trans_dim_sp[mem][op][dim] * trans_dim_tp[mem][op][dim]
             if acc.mappingArray[op][mem]:
@@ -150,7 +141,7 @@ class tranSimulator():
             else:
                 tileSize[mem,op] = 0
 
-            op = 2  # Output
+            op = 2
             for dim in range(1,ops.Num_dim):
                 tmp_dim[dim] = trans_dim_sp[mem][op][dim] * trans_dim_tp[mem][op][dim]
             if acc.mappingArray[op][mem]:
@@ -173,18 +164,18 @@ class tranSimulator():
                 self.instance_Used_count[m, op] = cnt
         for op, op_name in enumerate(['I','W','O']):
             self.instance_Used_count[acc.Num_mem, op] = self.instance_Used_count[acc.lastMem[1], 1]
-        
+
         self.count_mac = 0
 
         self.timer = {}
         for mem in range(acc.Num_mem+1):
             for op, op_name in enumerate(['I','W','O']):
                 self.timer[mem,op] = 0
-        
+
         self.memCost = {}
         for m in range(1,acc.Num_mem+1):
             self.memCost[m] = TransCost(r=0, w=0, t=0)
-        
+
         self.PD = ProfilingDetail()
         self.PD.memCost.append(0)
 
@@ -193,7 +184,7 @@ class tranSimulator():
             tmp_list = []
             for op, op_name in enumerate(['I','W','O']):
                 if acc.mappingArray[op][mem] == 0:
-                    tmp_list.append('-') 
+                    tmp_list.append('-')
                 else:
                     tmp_list.append(round(self.dataflow.usr_defined_double_flag[mem][op]))
             self.PD.doubleFlag.append(tmp_list)
@@ -215,7 +206,7 @@ class tranSimulator():
                 pstr += f"{op_name}({timer[mem,op]:^8})  "
             pstr += '\n'
         print(pstr)
-            
+
 
     def loopExecution(self, loopidx:int):
 
@@ -225,7 +216,6 @@ class tranSimulator():
 
         if loopidx == len(self.dataflow.tm):
             mac_mem = self.acc.Num_mem
-            # data_input_rdy = max(self.timer[mac_mem,0], self.timer[mac_mem,1])
             data_input_rdy = max(self.timer[mac_mem,op] for op in range(3))
             data_output_rdy = self.timer[mac_mem,2]
             self.ptimer(loopidx, 0)
@@ -233,15 +223,13 @@ class tranSimulator():
             for op, op_name in enumerate(['I','W','O']):
                 self.timer[mac_mem, op] = max(data_input_rdy + self.acc.t_MAC, data_output_rdy)
 
-            for op, op_name in enumerate(['I','W','O']):                                # bit-serial  Macro/IOReg should be defined by user
-                # if op_name == 'O':                          # Psum dont using bit-serial
-                #     self.timer[mac_mem, op] += 1            # Accumulation in the merge unit 
+            for op, op_name in enumerate(['I','W','O']):
                 if self.dataflow.usr_defined_double_flag[uppmem[mac_mem,op]][op] == 0:
                     self.timer[uppmem[mac_mem,op], op] = self.timer[mac_mem, op]
             self.count_mac += 1
-            
+
             self.ptimer(loopidx, 1)
-            
+
         else:
             mem_cur = [self.dataflow.tm[loopidx].mem[op] for op in range(3)]
             mem_nxt = [nxtmem[mem_cur[op],op] for op in range(3)]
@@ -250,13 +238,10 @@ class tranSimulator():
             tileSize = [self.tileSize[mem_cur[op],op] if xMem[loopidx,op]==1 else 0 for op in range(3)]
 
             trans = [math.ceil(tileSize[op]*self._prec(mem_cur[op], op)/self.acc.bw[mem_cur[op]]) for op in range(3)]
-            '''
-            如果将来 r_bw ≠ w_bw 或内层 bw < 外层 bw 就会出错 但当前不需要修 MIP 模型用的同一个
-            '''
-            for op, op_name in enumerate(['I','W','O']):     
+            for op, op_name in enumerate(['I','W','O']):
                 if mem_cur[op] == self.lastMappingMem[op] and self.lastMemReg[op] is False:
-                    trans[op] += 1                      # Not only 1, consider others
-            op, op_name = 1,'W'     # Weight
+                    trans[op] += 1
+            op, op_name = 1,'W'
             if mem_cur[op] == self.acc.Macro2mem:
                 trans[op] = 0
             Cons = [(trans[op] if xMem[loopidx,op]==1 else 0) for op in range(3)]
@@ -269,13 +254,13 @@ class tranSimulator():
             for i in range(N):
 
                 for op, op_name in enumerate(['I','W','O']):
-                    if dflag[op] == 1:      # double-buffer: start immediately
+                    if dflag[op] == 1:
                         self.timer[mem_cur[op],op] = self.timer[mem_cur[op],op] + Cons[op]
                         stall = max(0,max(self.timer[mem_nxt[op],op], self.timer[mem_cur[op],op]) - self.timer[mem_nxt[op],op])
                         self.timer[mem_nxt[op],op] = max(self.timer[mem_nxt[op],op], self.timer[mem_cur[op],op])
                         self.PD.transfer_cycles[op] += Cons[op]
                         self.PD.mismatch_cycles[op] += stall
-                    else:                   # single-buffer: wait for nxt
+                    else:
                         self.timer[mem_cur[op],op] = max(self.timer[mem_cur[op],op], self.timer[mem_nxt[op],op]) + Cons[op]
                         self.timer[mem_nxt[op],op] = self.timer[mem_cur[op],op]
                         stall = Cons[op]
@@ -293,11 +278,7 @@ class tranSimulator():
                         self.memCost[mem_cur[op]].r += self.acc.cost_r[mem_cur[op]] * tileSize[op] * self._prec(mem_cur[op], op)
                         self.memCost[mem_nxt[op]].w += self.acc.cost_w[mem_nxt[op]] * nxtSize[op]  * self._prec(mem_nxt[op], op)
 
-                # Double-buffer O write-back of previous iteration (delayed).
-                # Placed after pre-read so PR(k) and WB(k-1) are serial at mem_cur.
-                # max(cur, nxt) enforces data dependency on previous child.
-                # nxt NOT updated: WB at mem_cur port does not block child at mem_nxt.
-                op = 2  # O
+                op = 2
                 if i > 0 and Cons[op] > 0 and dflag[op] == 1:
                     self.timer[mem_cur[op],op] = max(self.timer[mem_cur[op],op], self.timer[mem_nxt[op],op]) + Cons[op]
                     self.PD.transfer_cycles[op] += Cons[op]
@@ -317,8 +298,7 @@ class tranSimulator():
 
                 self.loopExecution(loopidx=loopidx+1)
 
-                # Single-buffer O write-back: after child (no pipeline benefit)
-                op = 2  # O
+                op = 2
                 if dflag[op] != 1:
                     self.timer[mem_nxt[op],op] = max(self.timer[mem_cur[op],op], self.timer[mem_nxt[op],op]) + Cons[op]
                     self.timer[mem_cur[op],op] = self.timer[mem_nxt[op],op]
@@ -339,8 +319,7 @@ class tranSimulator():
 
                 self.ptimer(loopidx, i+1)
 
-            # Flush: last double-buffer O write-back
-            op = 2  # O
+            op = 2
             if N > 0 and Cons[op] > 0 and dflag[op] == 1:
                 self.timer[mem_cur[op],op] = max(self.timer[mem_cur[op],op], self.timer[mem_nxt[op],op]) + Cons[op]
                 self.PD.transfer_cycles[op] += Cons[op]
@@ -358,21 +337,6 @@ class tranSimulator():
 
                 self.memCost[mem_cur[op]].t += Cons[op]
 
-    # ------------------------------------------------------------------
-    # Analytical evaluation path.
-    #
-    # 动机：CoSA / CIMLoop 产生的 mapping 经常把大的 trip count 放在内层，
-    # 每层 `for i in range(N)` 展开后 leaf 调用数会放大成全部 MAC 事件数（VGG 单层
-    # 可到 1e9 量级），原 tile-walk `loopExecution` 会跑数小时。
-    #
-    # A fixed three-iteration extrapolation is not exact when the transient
-    # lasts longer than two iterations. Only skip iterations after ALL
-    # timer coordinates read by the repeated body advance by one common shift.
-    # The body uses additions, max and timer differences, so it is translation
-    # equivariant on these coordinates; equal relative state proves that every
-    # following iteration has the same timing/profile increment. Otherwise keep
-    # executing. This conservative guard may sacrifice acceleration, not accuracy.
-    # ------------------------------------------------------------------
 
     def _analytical_active_timers(self, loopidx):
         if not hasattr(self, "_analytical_timer_cache"):
@@ -429,7 +393,6 @@ class tranSimulator():
         if N == 0:
             return
 
-        # === iter 0 === （跳过 i>0 分支）
         self._analytical_iter_body(
             loopidx=loopidx, i_gt_0=False,
             mem_cur=mem_cur, mem_nxt=mem_nxt,
@@ -446,7 +409,6 @@ class tranSimulator():
             )
             return
 
-        # iter 1 带 i>0 分支
         self._analytical_iter_body(
             loopidx=loopidx, i_gt_0=True,
             mem_cur=mem_cur, mem_nxt=mem_nxt,
@@ -510,7 +472,6 @@ class tranSimulator():
 
     def _analytical_iter_body(self, loopidx, i_gt_0, mem_cur, mem_nxt,
                               tileSize, nxtSize, Cons, dflag):
-        # pre-read (与 loopExecution lines 267-290 对齐)
         for op in range(3):
             if dflag[op] == 1:
                 self.timer[mem_cur[op], op] = self.timer[mem_cur[op], op] + Cons[op]
@@ -535,7 +496,6 @@ class tranSimulator():
                 self.memCost[mem_cur[op]].r += self.acc.cost_r[mem_cur[op]] * tileSize[op] * self._prec(mem_cur[op], op)
                 self.memCost[mem_nxt[op]].w += self.acc.cost_w[mem_nxt[op]] * nxtSize[op] * self._prec(mem_nxt[op], op)
 
-        # double-buffer O 的 pre-child write（仅 i > 0；lines 297-312）
         op = 2
         if i_gt_0 and Cons[op] > 0 and dflag[op] == 1:
             self.timer[mem_cur[op], op] = max(self.timer[mem_cur[op], op], self.timer[mem_nxt[op], op]) + Cons[op]
@@ -553,10 +513,8 @@ class tranSimulator():
 
             self.memCost[mem_cur[op]].t += Cons[op]
 
-        # child 递归一次
         self.loopExecutionAnalytical(loopidx=loopidx + 1)
 
-        # 单缓冲 O 的 post-child write（每 iter 都跑；lines 317-334）
         op = 2
         if dflag[op] != 1:
             self.timer[mem_nxt[op], op] = max(self.timer[mem_cur[op], op], self.timer[mem_nxt[op], op]) + Cons[op]
@@ -578,7 +536,6 @@ class tranSimulator():
 
     def _analytical_flush(self, loopidx, mem_cur, mem_nxt,
                           tileSize, nxtSize, Cons, dflag):
-        # double-buffer O 末尾 flush（lines 339-355）
         op = 2
         N = self.dataflow.tm[loopidx].dimSize
         if N > 0 and Cons[op] > 0 and dflag[op] == 1:
@@ -621,7 +578,6 @@ class tranSimulator():
             self.lastMemReg[op] = True if self.lastMappingMem[op] == self.acc.lastMem[op] else False
 
 
-        # # # # # # # # # # # # # # # # # # # # # # # # # # # # Start Running Simulator  # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
 
         for op, op_name in enumerate(['I','W','O']):
             if self.firstMemDram[op] is False:
@@ -648,13 +604,16 @@ class tranSimulator():
 
         for op, op_name in enumerate(['I','W','O']):
             if self.firstMemDram[op] is False:
-                # DRAM supplies the full operand in bootstrap (matches line 376's latency accounting).
-                # firstMappingMem's write side stays per-instance; line 402-404 scales it by instance count.
                 self.memCost[self.acc.Dram2mem].r += self.ops.size[op] * \
                                                     self.acc.cost_r[self.acc.Dram2mem] * self._prec(self.acc.Dram2mem, op)
                 self.memCost[self.firstMappingMem[op]].w += self.dataSize[self.firstMappingMem[op],op] * \
                                                        self.acc.cost_w[self.firstMappingMem[op]] * self._prec(self.firstMappingMem[op], op)
-        
+                if op_name == 'O':
+                    self.memCost[self.firstMappingMem[op]].r += self.dataSize[self.firstMappingMem[op],op] * \
+                                                           self.acc.cost_r[self.firstMappingMem[op]] * self._prec(self.firstMappingMem[op], op)
+                    self.memCost[self.acc.Dram2mem].w += self.ops.size[op] * \
+                                                        self.acc.cost_w[self.acc.Dram2mem] * self._prec(self.acc.Dram2mem, op)
+
         for m in range(1, self.acc.Num_mem):
             for op, op_name in enumerate(['I','W','O']):
                 if self.acc.mappingArray[op][m] == 1 and self.instance_Used_count[m,op] > 1:
@@ -672,24 +631,22 @@ class tranSimulator():
             self.PD.memCost[m] += self.memCost[m].r + self.memCost[m].w
 
         cost_m = self.acc.cost_ActMacro * self.count_mac * self.instance_Used_count[4,0]
-                                                           # the number of multi-core is equal with the number of input buffer instance
 
         cost_s = res_Latency * self.acc.leakage_per_cycle
 
         res_Energy = cost_r+cost_w+cost_m+cost_s
-        
+
         Logger.info(f"* * SimuLax-Running  * *  Latency:{res_Latency}, MAC-times:{self.count_mac}, MAC-Latency:{self.count_mac*self.acc.t_MAC}, MAC-Energy:{cost_m:.3e} nJ")
         Logger.info(f"* * SimuLax-Running  * *  EnergyCost:{round(res_Energy,3)}, Dynamic({cost_r+cost_w+cost_m}), Leakage:{round(cost_s,3)}")
-        # Logger.info(f"* * SimuLax-Running  * *  readOUT:{round(cost_r,3)}, writeIN:{round(cost_w,3)}, MAC:{round(cost_m,3)}")
-        Logger.info(f"* * SimuLax-Running  * *  Memory Cost:") 
+        Logger.info(f"* * SimuLax-Running  * *  Memory Cost:")
         for m in range(1,self.acc.Num_mem):
             Logger.info('-'*4 + f" {self.acc.mem2dict(m)}: {(self.memCost[m].r + self.memCost[m].w):.3e} nJ" +
                         f" {self.memCost[m].r:.3e}(Read) + {self.memCost[m].w:.3e}(Write), "
                         f" ({round((self.memCost[m].r + self.memCost[m].w)/res_Energy*100,2)}%)")
-        Logger.info(f"* * SimuLax-Running  * *  Energy BreakDown: " + 
+        Logger.info(f"* * SimuLax-Running  * *  Energy BreakDown: " +
                     f"MemoryAccess(On/Off):{round((cost_r+cost_w-(self.memCost[1].r+self.memCost[1].w))/res_Energy*100,2)}%/{round((self.memCost[1].r+self.memCost[1].w)/res_Energy*100,2)}%, " +
-                    f"MAC:{round(cost_m/res_Energy*100,2)}%, " + 
-                    f"Leakage:{round(cost_s/res_Energy*100,2)}%" ) 
+                    f"MAC:{round(cost_m/res_Energy*100,2)}%, " +
+                    f"Leakage:{round(cost_s/res_Energy*100,2)}%" )
         Logger.info(f"* * SimuLax-Running  * *  EDP:{((res_Energy)*res_Latency):.3e}")
         Logger.info('* '*50+'\n')
 
@@ -715,10 +672,6 @@ class tranSimulator():
         self.PD.count_mac = self.count_mac
         self.PD.peak_mac_per_cycle = self.acc.Num_core * self.acc.dimX * self.acc.dimY
 
-        # Fallback byte accumulation: derive from memCost energy / cost_per_bit.
-        # Direct per-access accumulation would require touching all 30+ memCost +=
-        # sites; energy-inversion is bit-exact for constant cost_r/cost_w per level.
-        # Guard against zero cost (CIM Macro read is zeroed at line ~659).
         self.PD.bytes_read = []
         self.PD.bytes_written = []
         for m in range(1, self.acc.Num_mem):
@@ -735,10 +688,9 @@ class tranSimulator():
         acc = self.acc
         ops = self.ops
         pstr = "\n"
-        
+
         str_tpsp = "dim_tp & dim_sp \n"
         for mem in range(1,acc.Num_mem):
-            # str_tpsp += '- ' * 10 + f"{acc.mem2dict(mem)}: dim_tp & dim_sp " + '- ' * 10 + '\n'
             str_tpsp += '- - - - - tp - - - - - ' + f"{acc.mem2dict(mem):^15}" + '- - - - - sp - - - - - ' + '\n'
             for op, op_name in enumerate(['I','W','O']):
                 str_tpsp += f"{op_name}:"
@@ -748,9 +700,8 @@ class tranSimulator():
                 for dim in range(1,ops.Num_dim):
                     str_tpsp += f"{ops.dim2Dict[dim]}:{self.dim_sp[mem][op][dim]} "
                 str_tpsp += '\n'
-        # pstr += str_tpsp
 
-        
+
         str_mem = "Data element size:\n"
         for mem in range(1,acc.Num_mem):
             str_mem += f"{acc.mem2dict(mem):<15}:"
@@ -758,15 +709,14 @@ class tranSimulator():
                 str_mem += f"{self.dataSize[mem,t]:>8}"
             str_mem += '\n'
         pstr += str_mem
-        
+
         str_relat_mem = "\n"
         for mem in range(1, acc.Num_mem):
-            for op, op_name in enumerate(['I','W','O']):    
+            for op, op_name in enumerate(['I','W','O']):
                 if self.dataflow.bypassMem[mem][op] == 0:
                     str_relat_mem += f"{acc.mem2dict(mem)}({op_name}): "
                     str_relat_mem += f"next_mem is {acc.mem2dict(self.dataflow.nxtmem[mem,op])}"
                     str_relat_mem += '\n'
-        # pstr += str_relat_mem
 
 
         return pstr

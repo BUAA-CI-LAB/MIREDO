@@ -1,15 +1,3 @@
-# Default hardware template: 8-core digital SRAM-CIM accelerator at 28 nm.
-#
-# Each core holds one 32x128 macro array (32 rows x 16 INT8 weight columns)
-# with a storage-to-compute ratio of 8:1, an 8 KB input buffer and a 16 KB
-# output buffer (128 bit/cycle). The cores share a 256 KB global buffer
-# (128 bit/cycle) and 1 GB of DRAM (64 bit/cycle). Inputs and weights are INT8,
-# partial sums 16 bit.
-#
-# SRAM access energies and leakage were computed once with CACTI 7.0 and are
-# stored below, so this template does not need a CACTI build. Edit the fields
-# directly, or derive variants with Architecture/HardwareVariants.py.
-
 from __future__ import annotations
 
 from Architecture.HardwareSpec import HardwareSpec

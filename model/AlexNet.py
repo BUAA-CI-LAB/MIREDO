@@ -9,7 +9,6 @@ from torchvision.models import alexnet as alex_ori
 class AlexNet(nn.Module):
     def __init__(self, num_classes=10, dropout = 0.5, **kwargs):
         super().__init__()
-        # self.func = update_zeroPoint_someLayers
         self.func = lambda x:x
         self.block = nn.Sequential(
             nn.Conv2d(3, 96, kernel_size=3, stride=1, padding=1),
@@ -25,7 +24,7 @@ class AlexNet(nn.Module):
             nn.Conv2d(384, 256, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2)
-            ) 
+            )
         self.linear = nn.Sequential(
             nn.Dropout(p=dropout),
             nn.Linear(4 * 4 * 256, 2048),

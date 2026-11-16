@@ -1,0 +1,27 @@
+
+-MemCellType: SRAM
+-DeviceRoadmap -1LP 1HP 2LSTP: 1
+
+-CellArea (F^2): 130
+-CellAspectRatio: 1
+
+-CellReadLeakEnergyMultiplier: 4.5
+-CellWriteEnergyMultiplier: 1
+-CellCapacitanceMultiplier: 1
+-CellCapacitanceAdjust (F): 0
+
+-AccessCMOSWidth (F): 7
+-SRAMCellNMOSWidth (F): 5
+-SRAMCellPMOSWidth (F): 5
+-MinSenseVoltage (mV): 20
+-ReadMode: voltage
+
+-ResistanceOn (ohm): 1000
+-ResistanceOff (ohm): 100000
+-SetVoltage (V): 2
+-SetPulse (ns): 10
+-ReadVoltage (V): 0.2
+-ReadPulse (ns): 2
+-AccessType: None
+-AccessTransistorResistance (ohm): 1000
+-AccessVoltage (V): 0.2

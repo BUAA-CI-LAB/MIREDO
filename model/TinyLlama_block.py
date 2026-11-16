@@ -1,28 +1,3 @@
-"""TinyLlama-1.1B prefill transformer block ONNX export.
-
-Generates model/tinyllama_block.onnx (shape-inferred + onnx-simplifier).
-Exports a single LLaMA-2-architecture decoder block at TinyLlama-1.1B scale,
-with Grouped-Query Attention (GQA, 4 KV heads), random weights — MIREDO only
-consumes the operator shapes.
-
-TinyLlama-1.1B reference architecture (TinyLlama/TinyLlama-1.1B-Chat-v1.0):
-    hidden_size            = 2048
-    intermediate_size      = 5632
-    num_attention_heads    = 32
-    num_key_value_heads    = 4       # GQA
-    head_dim               = 64       (2048/32)
-    Default prefill seq    = 1024 (chosen to match GPT-2-medium pillar; the
-                                   model itself was trained at seq=2048 but
-                                   the shape-only ONNX export is sequence-agnostic).
-
-GEMM inventory the ONNX file exposes (the parser keeps Conv/MatMul/Gemm only):
-    Linear (Gemm) × 7   : Q, K, V, O, gate, up, down projections
-    MatMul × 2          : QK^T, Score·V (after KV repeat from 4 to 32 heads)
-
-Usage:
-    /home/xiaolin/anaconda3/envs/pim/bin/python model/TinyLlama_block.py
-"""
-
 import os
 import onnx
 import torch
@@ -32,7 +7,6 @@ from onnx import shape_inference
 
 
 class TinyLlamaBlock(nn.Module):
-    """Single TinyLlama-1.1B decoder block with GQA, no KV-cache (prefill)."""
 
     def __init__(self,
                  hidden_size: int = 2048,
@@ -84,7 +58,6 @@ def export_tinyllama_block(output_path: str = "model/tinyllama_block.onnx",
                            batch_size: int = 1,
                            opset_version: int = 13,
                            simplify: bool = True) -> str:
-    """Export single TinyLlama-1.1B decoder block to ONNX (random weights)."""
     block = TinyLlamaBlock().eval()
 
     x = torch.randn(batch_size, seq_len, 2048, dtype=torch.float32)

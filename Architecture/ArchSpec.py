@@ -1,7 +1,3 @@
-# CIM_Acc 是 MIREDO MIP solver + 仿真器共享的硬件实例对象；由 from_spec(HardwareSpec)
-# 唯一构造，能耗参数（cost_r / cost_w / leakage_per_cycle / cost_ActMacro）全部源自
-# spec 冻结值（spec 的 memory r/w 能耗 + leakage 由 utils/Cacti_wrapper 本地 CACTI @28nm 生成）。
-
 import math
 
 from utils.GlobalUT import Logger as Logger
@@ -9,20 +5,16 @@ from utils.GlobalUT import Logger as Logger
 def convert_mapping_to_next(matrix):
     rows = len(matrix)
     cols = len(matrix[0])
-    # 初始化结果矩阵，大小与输入矩阵相同，初值为-1
     nxtMem = [[-1 for _ in range(cols)] for _ in range(rows)]
     for row in range(rows):
         last_valid_layer = -1
         for col in range(cols):
-            # 只处理有效映射位置
             if matrix[row][col] == 1:
-                # 找到下一个有效层
                 next_layer = -1
                 for next_col in range(col + 1, cols):
                     if matrix[row][next_col] == 1:
                         next_layer = next_col
                         break
-                # 如果没有下一个有效层，则设置为层数总数
                 if next_layer == -1:
                     next_layer = cols
                 nxtMem[row][col] = next_layer
@@ -48,10 +40,6 @@ def find_FirstMem_index(mapArray, idx):
     return -1
 
 class CIM_Acc():
-    """CIM accelerator instance consumed by MIREDO MIP solver + simulator.
-
-    Construct via `CIM_Acc.from_spec(spec)`; direct `CIM_Acc(...)` is removed.
-    """
 
     def mem2dict(self,x):
         if x>=0 and x<self.Num_mem:
@@ -63,20 +51,11 @@ class CIM_Acc():
 
     @property
     def placement_depth(self):
-        """Deepest per-operand memory-placement chain (max over operands of the
-        admissible levels), read by FlexFact as the no-placement-loss depth M.
-        Computed from the admissibility matrix on access, so it is always present
-        even for an accelerator restored from an older cache."""
         return max(sum(self.mappingArray[op][m] for m in range(1, self.Num_mem))
                    for op in range(3))
 
     @classmethod
     def from_spec(cls, spec) -> "CIM_Acc":
-        """从 HardwareSpec 构造 CIM_Acc，字段布局与 __init__ 严格一致。
-
-        单位约定：cost_ActMacro / cost_r / cost_w 最终为 nJ 单位（遵循 pj_to_nj），
-        leakage_per_cycle 取 spec.leakage_per_cycle_nJ（已是 nJ，不再二次转换）。
-        """
         Logger.critical("Create CIM Acc (from_spec)")
         self = cls.__new__(cls)
         self._mem2dict = ['-P-']
@@ -126,9 +105,6 @@ class CIM_Acc():
 
         self.lastMem = {0: self.IReg2mem, 1: self.Macro2mem, 2: self.OReg2mem}
 
-        # Macro weight double buffering: 0 = mutually exclusive memory/compute
-        # modes (default); 1 = ping-pong-capable weight store, exposed through
-        # double_config to the MIP and the simulator.
         self.double_Macro = 1 if bool(getattr(spec.macro, "weight_double_buffer", False)) else 0
         self.double_config = [[0 for _ in range(3)] for _ in range(self.Num_mem)]
         for m in range(1, self.Num_mem):
@@ -137,7 +113,7 @@ class CIM_Acc():
                     self.double_config[m][op] = 1
         self.double_config[self.Macro2mem][1] = self.double_Macro
         self.double_config[self.IReg2mem][0] = 0
-        self.double_config[self.OReg2mem][2] = 0   # OReg holds O (op2), not I; a 1-element output register cannot double-buffer. Was [0] (no-op copy-paste typo from the IReg line).
+        self.double_config[self.OReg2mem][2] = 0
 
         self.shareMemory = [False for _ in range(self.Num_mem)]
         for m in range(1, self.Num_mem):
@@ -216,21 +192,6 @@ class CIM_Acc():
         self.cost_w = pj_to_nj(self.cost_w)
         self.leakage_per_cycle = spec.leakage_per_cycle_nJ
 
-        # 追溯 spec 来源，供 downstream（ZigZag baseline adapter、cache key）使用
         self.source_spec = spec
 
         return self
-       
-# hd_param = {
-#         "pe_type":              "in_sram_computing",     # for in-memory-computing. Digital core for different values.
-#         "imc_type":             "digital",  # "digital" or "analog"
-#         "input_precision":      8,          # activation precision expected in the hardware
-#         "weight_precision":     8,          # weight precision expected in the hardware
-#         "input_bit_per_cycle":  1,          # nb_bits of input/cycle/PE
-#         "group_depth":          4,          # group depth in each PE
-#         "wordline_dimension": "D1",         # hardware dimension where wordline is (corresponds to the served dimension of output #-input-# regs)
-#         "bitline_dimension": "D2",          # hardware dimension where bitline is (corresponds to the served dimension of intput #-output-# regs)
-#         "enable_cacti":         True,       # use CACTI to estimated cell array area cost (cell array exclude build-in logic part)
-#         # Energy of writing weight. Required when enable_cacti is False.
-#         # "w_cost_per_weight_writing": 0.08,  # [OPTIONAL] unit: pJ/weight.
-#     }

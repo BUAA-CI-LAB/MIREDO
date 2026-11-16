@@ -1,20 +1,3 @@
-# Self-contained CACTI 7.0 Python driver for MIREDO.
-#
-# Originally adapted from ZigZag-IMC's get_cacti_cost.py (zigzag/classes/hardware/
-# architecture/get_cacti_cost.py). Copied + lifted so MIREDO does not depend on
-# ZigZag at runtime — CACTI sits under utils/Cacti_wrapper/cacti/ and is invoked
-# through this module exclusively.
-#
-# API:
-#   get_cacti_cost(tech_node, mem_type, mem_size_in_byte, bw, hd_hash=...)
-#     -> (access_time_ns, area_mm2, r_cost_pJ_per_access, w_cost_pJ_per_access)
-#
-# The tech_node=0.028 (28nm) case is handled by calling CACTI at its nearest
-# supported planar CMOS node (32nm) and applying a (0.9/1.0)^2 = 0.81 voltage-
-# squared scaling factor across all outputs. This is the same approximation
-# ZigZag-IMC uses; we keep the convention so the default-spec frozen values in
-# Architecture/templates/default.py remain reproducible byte-for-byte.
-
 import os
 import platform
 from pathlib import Path
@@ -343,12 +326,6 @@ class CactiConfig:
         return output
 
     def cacti_auto(self, user_input, path):
-        '''
-        user_input format can be 1 out of these 3:
-        user_input = ['default']
-        user_input = ['single', [['mem_type', 'technology', ...], ['"ram"', 0.028, ...]]
-        user_input = ['sweep', ['IO_bus_width'/'']]
-        '''
         user_config = []
         if user_input[0] == 'default':
             for itm in self.config_options.keys():
@@ -385,21 +362,6 @@ class CactiConfig:
 
 
 def get_cacti_cost(tech_node, mem_type, mem_size_in_byte, bw, hd_hash="a", cacti_path=None):
-    '''
-    Run CACTI and extract (access_time, area, r_cost, w_cost).
-
-    :param tech_node:           technology node in um (natively supported: 0.022, 0.032, 0.040,
-                                0.045, 0.065, 0.090; 0.028 remapped to 0.032 + 0.81 scaling).
-    :param mem_type:            'sram' or 'dram'.
-    :param mem_size_in_byte:    memory capacity in bytes (CACTI minimum: 64 B, minimum_rows: 32).
-    :param bw:                  memory IO bitwidth.
-    :param hd_hash:             suffix for the generated cache_{hd_hash}.cfg(.out) filenames —
-                                use a unique value per call to avoid races in parallel sweeps.
-    :param cacti_path:          root directory holding the `cacti` binary. Defaults to the copy
-                                vendored under utils/Cacti_wrapper/cacti/.
-
-    Returns (access_time_ns, area_mm2, r_cost_pJ_per_access, w_cost_pJ_per_access).
-    '''
     import logging as _logging
     _logging_level = _logging.CRITICAL
     _logging_format = '%(asctime)s - %(funcName)s +%(lineno)s - %(levelname)s - %(message)s'
@@ -408,8 +370,6 @@ def get_cacti_cost(tech_node, mem_type, mem_size_in_byte, bw, hd_hash="a", cacti
     if cacti_path is None:
         cacti_path = str(DEFAULT_CACTI_DIR)
 
-    # 28nm is not a directly-supported CACTI tech_params node; use 32nm as anchor
-    # and apply (0.9/1.0)^2 = 0.81 scaling on outputs to approximate 28nm@0.9V.
     if tech_node == 0.028:
         tech = 0.032
         scaling_factor = 0.9 * 0.9
@@ -424,8 +384,6 @@ def get_cacti_cost(tech_node, mem_type, mem_size_in_byte, bw, hd_hash="a", cacti
     else:
         raise ValueError(f'mem_type can only be dram or sram. Now it is: {mem_type}')
 
-    # CACTI area estimation grows nonlinearly when bw>32; clamp IO width to 32 and
-    # scale the reported cost back up proportionally for consistency.
     if bw > 32:
         rows = mem_size_in_byte * 8 / bw
         line_size = int(32 / 8)
@@ -439,10 +397,6 @@ def get_cacti_cost(tech_node, mem_type, mem_size_in_byte, bw, hd_hash="a", cacti
 
     file_path = './self_gen'
     cwd = os.getcwd()
-    # CACTI binary expects to be invoked from the directory containing its
-    # `tech_params/`, `self_gen/`, etc. — try/finally so unexpected exceptions
-    # (subprocess crash, parse failure, KeyboardInterrupt) cannot leave the
-    # caller's cwd pointing inside the CACTI tree.
     os.chdir(cacti_path)
     try:
         os.makedirs(file_path, exist_ok=True)
@@ -497,15 +451,14 @@ def get_cacti_cost(tech_node, mem_type, mem_size_in_byte, bw, hd_hash="a", cacti
         os.chdir(cwd)
 
     area = round(area, 7)
-    r_cost *= 1000  # nJ → pJ
+    r_cost *= 1000
     w_cost *= 1000
 
     return access_time, area, r_cost, w_cost
 
 
 if __name__ == '__main__':
-    # Smoke test: 32 rows × 32 cols SRAM, 32-bit IO, 28nm.
-    mem_size = 32 * 32 / 8  # bytes
+    mem_size = 32 * 32 / 8
     bw = 32
     access_time, area, r_cost, w_cost = get_cacti_cost(
         tech_node=0.028, mem_type='sram',

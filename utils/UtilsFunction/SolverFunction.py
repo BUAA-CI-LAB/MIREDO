@@ -1,6 +1,3 @@
-# this file is prepared for project 026
-# Created by iboxl
-
 import math
 import gurobipy as gp
 from gurobipy import GRB, quicksum
@@ -50,7 +47,6 @@ def var_max(model:gp.Model, vtype, A, B):
     var = model.addVar(vtype=vtype)
     model.addConstr(var >= var_A)
     model.addConstr(var >= B)
-    # model.addGenConstrMax(var, [var_A, B], 0)
     return var
 
 def var_max_const(model:gp.Model, vtype, B, const):
@@ -97,9 +93,6 @@ def exp_add(model:gp.Model, vtype, A, B):
 
 def var_minus(model:gp.Model, vtype, B, C):
     return B-C
-    # var = model.addVar(vtype=vtype)             # check B >= C
-    # model.addConstr(var==B-C)
-    # return var
 
 def var_mul(model:gp.Model, vtype, A, B):
     if isinstance(A, gp.QuadExpr) or isinstance(A, gp.LinExpr):
@@ -130,7 +123,7 @@ def exp_mul(model:gp.Model, vtype, A, B):
     return A * B
 
 def var_AgeB(model:gp.Model, A, B):
-    var = model.addVar(vtype=GRB.BINARY)             # check B >= C
+    var = model.addVar(vtype=GRB.BINARY)
     if isinstance(A, gp.QuadExpr) or isinstance(A, gp.LinExpr):
         var_A = model.addVar(vtype=GRB.CONTINUOUS)
         model.addConstr(var_A==A)
@@ -152,7 +145,7 @@ def var_AgeB(model:gp.Model, A, B):
     return var, var_A, var_B
 
 def var_AleB(model:gp.Model, A, B):
-    var = model.addVar(vtype=GRB.BINARY)             # check B >= C
+    var = model.addVar(vtype=GRB.BINARY)
     if isinstance(A, gp.QuadExpr) or isinstance(A, gp.LinExpr):
         var_A = model.addVar(vtype=GRB.CONTINUOUS)
         model.addConstr(var_A==A)
@@ -181,7 +174,7 @@ def var_AandB(model, A, B, name):
     elif not isinstance(B, gp.Var):
         return A if B==True else 0.0
     else:
-        var = model.addVar(vtype=GRB.BINARY, name=f'indic_{name}') 
+        var = model.addVar(vtype=GRB.BINARY, name=f'indic_{name}')
         model.addConstr( var <= A, name=f'C_AandB_{name}_1')
         model.addConstr( var <= B, name=f'C_AandB_{name}_2')
         model.addConstr( var >= A + B - 1, name=f'C_AandB_{name}_3')
@@ -196,7 +189,7 @@ def var_AorB(model, A, B, name):
 
 def tag_constraint(model:gp.Model, tag, num, name):
     num_block = model.addVar(lb=1, ub=num, vtype=GRB.INTEGER, name=name)
-    model.addConstrs(tag[i]>=tag[i+1] for i in range(num-1))                # 可以注释
+    model.addConstrs(tag[i]>=tag[i+1] for i in range(num-1))
     model.addConstr(quicksum(tag[i] for i in range(num)) == num_block)
     return num_block
 
@@ -224,9 +217,9 @@ def get_startVar_set(model:gp.Model):
 
 def set_startVar(model:gp.Model, preset_conditions, res_str):
     best_sv = None
-    best_l = float('inf')  # 初始化为无穷大
+    best_l = float('inf')
     for sv in preset_conditions:
-        if sv is None:  # 跳过 None 值
+        if sv is None:
             continue
         l = sv.get(res_str, None)
         if l is not None and l < best_l:
@@ -245,9 +238,6 @@ def var_mul01(model:gp.Model, indic, A, name, A_ub = None, A_lb = None, var_ub =
             return A
         else:
             return 0
-    # model.update() flushes all pending Gurobi operations — expensive when
-    # called repeatedly.  Only needed when we read back Var.ub or Var.lb
-    # from the model (bounds may have been modified after addVar).
     need_ub = A_ub is None and isinstance(A, gp.Var)
     need_lb = A_lb is None and isinstance(A, gp.Var)
     if need_ub or need_lb:

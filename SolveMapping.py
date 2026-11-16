@@ -1,6 +1,3 @@
-# this file is prepared for project 511
-# Created by iboxl
-
 from utils.Workload import WorkLoad
 from utils.Tools import append_scheme_summary, detect_parallel_config, auto_parallel_config, SharedUB
 from utils.SolverTSS import Solver, SolverProfile
@@ -43,14 +40,13 @@ class MappingRunProfile:
     parallel_config: dict = field(default_factory=dict)
     best_solver_profile: SolverProfile | None = None
 
-_worker_env = None  # cached Gurobi Env, set by _init_worker
+_worker_env = None
 
 
 def _finite_metric_bound(metric_bound):
     return metric_bound is not None and metric_bound < CONST.MAX_POS * 0.5
 
 def _init_worker(threads_per_worker, runtime_config):
-    """ProcessPoolExecutor initializer: create one Gurobi Env per worker process."""
     global _worker_env
     if runtime_config is not None:
         for key, value in runtime_config["CONST"].items():
@@ -65,11 +61,8 @@ def _init_worker(threads_per_worker, runtime_config):
 
 def solve_scheme_worker(count:int, origin_index:int, scheme, acc:CIM_Acc, ops:WorkLoad, metric_ub:float, outputdir_root:str, outputdir_scheme:str, threads_per_worker:int, soft_mem_limit_gb:float, runtime_config=None, shared_ub_name=None):
     if runtime_config is None:
-        # Sequential mode: apply config directly (no initializer)
         pass
-    # In parallel mode, config was already applied by _init_worker
 
-    # Open cross-worker shared memory for metric upper bound
     shared_ub = None
     _shm_handle = None
     if shared_ub_name is not None:
@@ -81,8 +74,6 @@ def solve_scheme_worker(count:int, origin_index:int, scheme, acc:CIM_Acc, ops:Wo
     spatial_unrolling = [math.prod(col) for col in zip(*scheme)]
     temporal_unrolling = [math.ceil(x / y) for x, y in zip(ops.dim2bound, spatial_unrolling)]
 
-    # Provable lower-bound pruning: skip model building entirely if the
-    # analytical bound already exceeds the current best objective.
     effective_ub = CONST.MAX_POS if metric_ub is None else metric_ub
     if shared_ub is not None:
         effective_ub = min(effective_ub, shared_ub.value)
@@ -120,7 +111,6 @@ def solve_scheme_worker(count:int, origin_index:int, scheme, acc:CIM_Acc, ops:Wo
 
         has_solution = solver.profile.sol_count > 0
         if has_solution:
-            # Immediately propagate solution to shared state for cross-worker pruning
             if shared_ub is not None:
                 metric_index = {"Latency": 0, "Energy": 1, "EDP": 2}.get(CONST.FLAG_OPT)
                 if metric_index is not None:
@@ -200,8 +190,6 @@ def update_best(result_pack:dict, best_metric:float, result, best_count:int, bes
 
     assert CONST.FLAG_OPT in ["Latency", "Energy", "EDP"], "No Such Metric for Optimization, Please Check CONST.FLAG_OPT"
     metric_index = {"Latency": 0, "Energy": 1, "EDP": 2}[CONST.FLAG_OPT]
-    # Record MIREDO's own best independently from any external baseline.  The
-    # pruning bound `best_metric` is only tightened by MIREDO incumbents.
     if has_solution and solver_result[metric_index] < result[metric_index]:
         result = solver_result + [sim_l, sim_e] + [profile]
         best_count = count
@@ -236,7 +224,6 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
     result = [CONST.MAX_POS] * 5 + [None]
     enumeration_begin = time.time()
 
-    # ── Step 1: enumerate & prune spatial schemes ──────────────────────────
     if singleIter:
         scheme = kwargs["Spatial_unrolling"]
         assert scheme is not None, "Single Iteration Mode Requires Spatial Unrolling Input as Scheme."
@@ -266,13 +253,6 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
         run_profile.timing_enumeration_sec = time.time() - enumeration_begin
         pruning_begin = time.time()
 
-        # ── Dominance pruning (optional, off by default) ─────────────────
-        # NOT provably safe: a dominator with prime temporal factors may have
-        # fewer loop levels than the dominated scheme, limiting memory hierarchy
-        # tiling flexibility.  ~44% of dominance pairs exhibit this factor-count
-        # asymmetry.  Experimentally validated (never loses optimum on tested
-        # workloads), but cannot guarantee zero optimality loss in general.
-        # Enable via SolveMapping(..., dominance_pruning=True) for ablation.
         if kwargs.get("dominance_pruning", False):
             dominance_safe = True
             for m in range(1, acc.Num_mem):
@@ -304,15 +284,8 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
                 Logger.info(f"Dominance pruning skipped: spatial tile exceeds buffer capacity.")
         run_profile.num_schemes_after_dominance = len(scheme_records)
 
-        # ── Sort by utilization score ──────────────────────────────────────
-        # High-utilization first → finds good bounds early → tightens metric_ub
-        # → accelerates downstream analytical-LB pruning.
         scheme_records.sort(key=lambda r: (r["meta"]["sort_key"], -r["origin_index"]), reverse=True)
 
-        # ── Analytical lower-bound screening (Propositions 1-3) ────────────
-        # Discard schemes whose provable LB exceeds the initial internal metric UB.
-        # The dynamic version in solve_scheme_worker re-checks against the
-        # live shared_ub during parallel execution.
         if _finite_metric_bound(best_metric):
             before = len(scheme_records)
             survived = []
@@ -327,12 +300,6 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
         run_profile.num_schemes_after_static_lb = len(scheme_records)
         run_profile.timing_scoring_pruning_sec = time.time() - pruning_begin
 
-    # ── Optional top-K truncation (EXP-7f knob) ───────────────────────────
-    # Applied AFTER analytical-LB screening (static LB stage) and BEFORE
-    # scout/sweep dispatch.  Activates only when FLAG.ACCEL_TOP_K is a
-    # positive integer; None/0/unset leaves the pipeline byte-identical.
-    # Relies on the utilization-LB sort already done at line 309 — the
-    # highest-utility candidates are at the front of scheme_records.
     _top_k = getattr(FLAG, "ACCEL_TOP_K", None)
     if _top_k and isinstance(_top_k, int) and _top_k > 0 and len(scheme_records) > _top_k:
         Logger.info(f"Top-K truncation: {len(scheme_records)} -> {_top_k} schemes (ACCEL_TOP_K={_top_k}).")
@@ -349,15 +316,11 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
         scheme_record["count"] = count
         scheme_record["outputdir_scheme"] = outputdir if singleIter else os.path.join(outputdir, "SolPool", str(count))
 
-    # ── Step 2: two-phase adaptive parallel configuration ─────────────────
     parallel_config = detect_parallel_config()
     usable = parallel_config["usable_cores"]
     avail_mem = parallel_config["available_mem_gb"]
     runtime_config = {"CONST": dict(vars(CONST)), "FLAG": dict(vars(FLAG))}
 
-    # Two-phase adaptive parallel config: scout (thread-tilted, high-utility
-    # schemes) then sweep (worker-tilted, remaining schemes). See
-    # utils.Tools.auto_parallel_config docstring for the design rationale.
     parallel_cfg = auto_parallel_config(usable, avail_mem, num_schemes)
     scout_threads, scout_workers = parallel_cfg["scout"]
     sweep_threads, sweep_workers = parallel_cfg["sweep"]
@@ -441,7 +404,7 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
             nonlocal count, best_metric, result, best_count, best_dataflow, solCount, best_solver_profile, best_origin_index
             pending = {}
             rec_iter = iter(records)
-            inflight_limit = max_workers * 2  # bound pending futures to limit memory
+            inflight_limit = max_workers * 2
 
             def submit(rec):
                 nonlocal count, best_metric
@@ -464,13 +427,11 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
                 pending[future] = scheme_count
                 count = scheme_count
 
-            # Fill pipeline
             for rec in rec_iter:
                 submit(rec)
                 if len(pending) >= inflight_limit:
                     break
 
-            # Drain + refill
             while pending:
                 done, _ = wait(tuple(pending.keys()), return_when=FIRST_COMPLETED)
                 for future in done:
@@ -499,12 +460,10 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
         sweep_records = scheme_records[scout_size:]
 
         try:
-            # Phase 1: Scout — more threads, top-ranked schemes
             with ProcessPoolExecutor(max_workers=scout_workers, mp_context=mp_context,
                                      initializer=_init_worker, initargs=(scout_threads, runtime_config)) as executor:
                 _run_phase(executor, scout_records, scout_threads, soft_mem_scout, scout_workers)
 
-            # Phase 2: Sweep — more workers, remaining schemes with tight shared_ub
             if sweep_records:
                 with ProcessPoolExecutor(max_workers=sweep_workers, mp_context=mp_context,
                                          initializer=_init_worker, initargs=(sweep_threads, runtime_config)) as executor:
@@ -513,7 +472,7 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
             _shm.close()
             _shm.unlink()
     run_profile.timing_mip_wall_sec = time.time() - mip_stage_begin
-    
+
     if count == 0:
         raise ValueError("No feasible spatial scheme found after pre-screening")
     if solCount == 0:
@@ -543,7 +502,7 @@ def SolveMapping(acc:CIM_Acc, ops:WorkLoad, bestMetric:int, outputdir:str, singl
     return result
 
 if __name__ == "__main__":
-    
+
     import uuid
     import time
     outFolder = os.path.join("output",f"#SolveMappingTest_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid1().hex[:8]}")
@@ -559,85 +518,24 @@ if __name__ == "__main__":
     Logger.debug("Running SolveMapping for debugging and testing Solver (MIP model), only one iteration with given scheme")
 
     CONST.FLAG_OPT="Latency"
-    # CONST.FLAG_OPT="Energy"
-    # CONST.FLAG_OPT="EDP"
-    
+
     CONST.MIPFOCUS = 1
-    # CONST.MIPFOCUS = 2
-    # CONST.MIPFOCUS = 3
-    
+
     CONST.TIMELIMIT = 77
-    # CONST.TIMELIMIT = 600
 
-    # # # # # RestNet-layer-0
-    # ops = WorkLoad(loopDim={'R': 7, 'S': 7, 'C': 3, 'K':64, 'P': 112, 'Q': 112, 'G': 1, 'B': 1, 'H': 224, 'W': 224, 'Stride': 2, 'Padding': 3})
-    # Spatial_unrolling = [[1,1,1,2,1,1,4,1],
-    #                  #   [-,R,S,P,Q,C,K,G],
-    #                      [1,1,7,1,1,3,1,1],
-    #                      [1,1,1,1,1,1,16,1]]
 
-    # # # # # RestNet-layer-1
     ops = WorkLoad(loopDim={'R': 3, 'S': 3, 'C': 64, 'K':64, 'P': 56, 'Q': 56, 'G': 1, 'B': 1, 'H': 56, 'W': 56, 'Stride': 1, 'Padding': 1})
     Spatial_unrolling =    [[1,1,1,2,1,1,4,1],
-                        #   [-,R,S,P,Q,C,K,G],
                             [1,1,1,1,1,32,1,1],
                             [1,1,1,1,1,1,16,1]]
 
-    # # # # # RestNet-layer-12
-    # ops = WorkLoad(loopDim={'R': 1, 'S': 1, 'C': 128, 'K':256, 'P': 14, 'Q': 14, 'G': 1, 'B': 1, 'H': 28, 'W': 28, 'Stride': 2, 'Padding': 0})
-    # Spatial_unrolling = [[1,1,1,2,2,1,2,1],
-    #                  #   [-,R,S,P,Q,C,K,G],
-    #                      [1,1,1,1,1,32,1,1],
-    #                      [1,1,1,1,1,1,16,1]]
 
-    # # # # # RestNet-layer-15
-    # ops = WorkLoad(loopDim={'R': 3, 'S': 3, 'C': 256, 'K':512, 'P': 7, 'Q': 7, 'G': 1, 'B': 1, 'H': 14, 'W': 14, 'Stride': 2, 'Padding': 1})
-    # Spatial_unrolling = [[1,1,1,1,1,1,8,1],
-    #                  #   [-,R,S,P,Q,C,K,G],
-    #                      [1,1,1,1,1,32,1,1],
-    #                      [1,1,1,1,1,1,16,1]]
 
-    # # # # # RestNet-layer-16
-    # ops = WorkLoad(loopDim={'R': 3, 'S': 3, 'C': 512, 'K':512, 'P': 7, 'Q': 7, 'G': 1, 'B': 1, 'H': 7, 'W': 7, 'Stride': 1, 'Padding': 1})
-    # Spatial_unrolling = [[1,1,1,1,1,1,8,1],
-    #                  #   [-,R,S,P,Q,C,K,G],
-    #                      [1,1,1,1,1,32,1,1],
-    #                      [1,1,1,1,1,1,16,1]]
 
-    # # # # # RestNet-layer-17
-    # ops = WorkLoad(loopDim={'R': 1, 'S': 1, 'C': 256, 'K':512, 'P': 7, 'Q': 7, 'G': 1, 'B': 1, 'H': 14, 'W': 14, 'Stride': 2, 'Padding': 0})
-    # Spatial_unrolling = [[1,1,1,1,1,1,8,1],
-    #                  #   [-,R,S,P,Q,C,K,G],
-    #                      [1,1,1,1,1,32,1,1],
-    #                      [1,1,1,1,1,1,16,1]]
 
-    # # # # # MobileNetV2-depthwise Conv_1  (G=32,  P=Q=112, stride=1, SpUr from full-model Scheme4)
-    # ops = WorkLoad(loopDim={'R': 3, 'S': 3, 'C': 1, 'K': 1, 'P': 112, 'Q': 112, 'G': 32, 'B': 1, 'H': 112, 'W': 112, 'Stride': 1, 'Padding': 1})
-    # Spatial_unrolling = [[1,1,1,1,8,1,1,1],
-    #                  #   [-,R,S,P,Q,C,K,G],
-    #                      [1,3,3,1,1,1,1,1],
-    #                      [1,1,1,1,1,1,1,1]]
 
-    # # # # # MobileNetV2-depthwise Conv_10 (G=144, P=Q=28,  stride=2, SpUr from full-model Scheme2)
-    # ops = WorkLoad(loopDim={'R': 3, 'S': 3, 'C': 1, 'K': 1, 'P': 28, 'Q': 28, 'G': 144, 'B': 1, 'H': 56, 'W': 56, 'Stride': 2, 'Padding': 1})
-    # Spatial_unrolling = [[1,1,1,1,2,1,1,4],
-    #                  #   [-,R,S,P,Q,C,K,G],
-    #                      [1,3,3,1,1,1,1,1],
-    #                      [1,1,1,1,1,1,1,1]]
 
-    # # # # # MobileNetV2-depthwise Conv_40 (G=576, P=Q=7,   stride=2, SpUr from full-model Scheme1)
-    # ops = WorkLoad(loopDim={'R': 3, 'S': 3, 'C': 1, 'K': 1, 'P': 7, 'Q': 7, 'G': 576, 'B': 1, 'H': 14, 'W': 14, 'Stride': 2, 'Padding': 1})
-    # Spatial_unrolling = [[1,1,1,1,1,1,1,8],
-    #                  #   [-,R,S,P,Q,C,K,G],
-    #                      [1,3,3,1,1,1,1,1],
-    #                      [1,1,1,1,1,1,1,1]]
 
-    # # # # # MobileNetV2-depthwise Conv_43 (G=960, P=Q=7,   stride=1, SpUr from full-model Scheme1)
-    # ops = WorkLoad(loopDim={'R': 3, 'S': 3, 'C': 1, 'K': 1, 'P': 7, 'Q': 7, 'G': 960, 'B': 1, 'H': 7, 'W': 7, 'Stride': 1, 'Padding': 1})
-    # Spatial_unrolling = [[1,1,1,1,1,1,1,8],
-    #                  #   [-,R,S,P,Q,C,K,G],
-    #                      [1,3,3,1,1,1,1,1],
-    #                      [1,1,1,1,1,1,1,1]]
 
     lat, eng, edp, c_lat, c_eng, ds = SolveMapping(acc=accelerator, ops=ops, bestMetric=CONST.MAX_POS, outputdir=outFolder, singleIter=True, Spatial_unrolling=Spatial_unrolling)
 

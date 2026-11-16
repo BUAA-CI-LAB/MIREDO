@@ -1,15 +1,3 @@
-"""BERT-Base-uncased ONNX 导出脚本。
-
-生成 model/bert_base.onnx（shape-inferred + onnx-simplifier 处理）。
-MIREDO 运行时仅读 ONNX 文件。
-
-BERT-Base-uncased: 12 encoder layers, d_model=768, d_head=64, heads=12,
-MLP hidden=3072. 我们用 seq_len=128, batch=1 作为典型评估输入。
-
-用法：
-    /home/xiaolin/anaconda3/envs/pim/bin/python model/BERT_Base.py
-"""
-
 import os
 import onnx
 import torch
@@ -21,18 +9,14 @@ def export_bert_base(output_path: str = "model/bert_base.onnx",
                      batch_size: int = 1,
                      opset_version: int = 13,
                      simplify: bool = True) -> str:
-    """Export BERT-Base-uncased to ONNX, seq=128, batch=1, random weights."""
-    # 随机初始化权重（形状是全部信息），避免下载 ~440 MB pretrained 权重
     from transformers import BertConfig, BertModel
-    cfg = BertConfig()  # bert-base 的默认配置就是我们要的
+    cfg = BertConfig()
     m = BertModel(cfg).eval()
 
-    # 输入：input_ids (long) + attention_mask (long)
     input_ids = torch.randint(0, cfg.vocab_size, (batch_size, seq_len), dtype=torch.long)
     attention_mask = torch.ones((batch_size, seq_len), dtype=torch.long)
 
     tmp_path = output_path + ".tmp"
-    # 显式列出 inputs/outputs，避免命名冲突
     torch.onnx.export(
         m,
         (input_ids, attention_mask),

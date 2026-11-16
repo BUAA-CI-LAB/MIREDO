@@ -1,39 +1,3 @@
-"""Single-token decode snapshots of the GPT-2-medium and TinyLlama-1.1B blocks.
-
-Exports model/gpt2_medium_decode_b{B}_t{T}.onnx and
-model/tinyllama_decode_b{B}_t{T}.onnx (shape-inferred + onnx-simplifier).
-
-Each file is one decoder block executing ONE new token per sequence for a batch
-of B independent sequences at context length T (T includes the new token, so
-the KV cache holds T-1 past entries). The block re-uses the prefill module
-classes from GPT2_Medium_block.py / TinyLlama_block.py unchanged; only the
-attention operands differ:
-
-    Q                 : (B, heads, 1, d)
-    K, V after concat : (B, kv_heads -> heads, T, d)   (TinyLlama repeats K/V
-                                                        from 4 to 32 heads as in
-                                                        the prefill export)
-    QK^T              : (B, heads, 1, d) x (B, heads, d, T) -> (B, heads, 1, T)
-    Score.V           : (B, heads, 1, T) x (B, heads, T, d) -> (B, heads, 1, d)
-
-Matrix inventory seen by OnnxParser (Conv/MatMul/Gemm only):
-    GPT-2-medium : 6 linear (Q, K, V, O, FC1, FC2) with M = B, + QK^T + Score.V
-    TinyLlama    : 7 linear (Q, K, V, O, gate, up, down) with M = B, + QK^T + Score.V
-
-Execution assumptions follow MIREDO's per-layer abstraction: every
-matrix product is an independent cold-start operator; projection weights and the
-KV cache are streamed from DRAM for every token; no cross-token residency, KV
-append, fusion or cross-operator scheduling is modeled. Softmax, normalization,
-activation, residual, RoPE, Concat and Reshape/Transpose are dropped by the
-parser exactly as in the prefill exports. Random weights; shapes only.
-
-Usage:
-    python model/Decode_blocks.py \
-        --batch 1 4 16 --context 128 512 1024 --grid cross
-    --grid cross  : b=1 x every context, plus every batch x the last context
-    --grid full   : every (batch, context) pair
-"""
-
 import argparse
 import os
 import sys
@@ -44,12 +8,11 @@ import torch.nn as nn
 from onnx import shape_inference
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from GPT2_Medium_block import GPT2MediumBlock  # noqa: E402
-from TinyLlama_block import TinyLlamaBlock  # noqa: E402
+from GPT2_Medium_block import GPT2MediumBlock
+from TinyLlama_block import TinyLlamaBlock
 
 
 class DecodeStep(nn.Module):
-    """Wrap a prefill block module and run one token against a KV cache."""
 
     def __init__(self, block: nn.Module, kv_repeat: int = 1):
         super().__init__()
@@ -58,7 +21,7 @@ class DecodeStep(nn.Module):
 
     def forward(self, x, past_k, past_v):
         blk = self.block
-        bsz, seq, _ = x.shape          # seq == 1
+        bsz, seq, _ = x.shape
         n_heads, d = blk.num_attention_heads, blk.head_dim
         n_kv = getattr(blk, "num_key_value_heads", n_heads)
 
@@ -66,7 +29,7 @@ class DecodeStep(nn.Module):
         q = blk.q_proj(x).view(bsz, seq, n_heads, d).transpose(1, 2)
         k = blk.k_proj(x).view(bsz, seq, n_kv, d).transpose(1, 2)
         v = blk.v_proj(x).view(bsz, seq, n_kv, d).transpose(1, 2)
-        k = torch.cat([past_k, k], dim=2)   # (B, n_kv, T, d)
+        k = torch.cat([past_k, k], dim=2)
         v = torch.cat([past_v, v], dim=2)
         if self.kv_repeat > 1:
             k = k.repeat_interleave(self.kv_repeat, dim=1)

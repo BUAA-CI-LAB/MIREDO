@@ -1,6 +1,3 @@
-# this file is prepared for project 026
-# Created by iboxl
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,7 +16,7 @@ class Block(nn.Module):
         self.bn1 = nn.BatchNorm2d(planes)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3,
                                stride=stride, padding=1, groups=planes, bias=False)
-        self.k2 = nn.Parameter(torch.ones(int(planes // 2)), requires_grad=True)                      
+        self.k2 = nn.Parameter(torch.ones(int(planes // 2)), requires_grad=True)
         self.bn2 = nn.BatchNorm2d(planes)
         self.conv3 = nn.Conv2d(
             planes, out_planes, kernel_size=1, stride=1, padding=0, bias=False)
@@ -45,7 +42,6 @@ class Block(nn.Module):
         out = F.relu(self.bn2(self.conv2(out)))
         out = self.bn3(self.conv3(out))
         shortcut = self.shortcut(x) if self.stride == 1 else out
-        # Squeeze-Excitation
         w = F.avg_pool2d(out, out.size(2))
         w = F.relu(self.fc1(w))
         w = self.fc2(w).sigmoid()
@@ -53,19 +49,15 @@ class Block(nn.Module):
         return out
 
     def forward_balanceInfer(self, func_update, inputs):
-        # out = F.relu(self.bn1(self.conv1(x)))
         w = func_update(self.conv1.weight, self.k1)
         out = F.conv2d(inputs, w, stride=self.conv1.stride, padding = self.conv1.padding)
         out = F.relu(self.bn1(out))
-        # out = F.relu(self.bn2(self.conv2(out)))
         w = func_update(self.conv2.weight, self.k2)
         out = F.conv2d(out, w, stride=self.conv2.stride, padding = self.conv2.padding, groups=self.conv2.groups)
         out = F.relu(self.bn2(out))
-        # out = self.bn3(self.conv3(out))
         w = func_update(self.conv3.weight, self.k3)
         out = F.conv2d(out, w, stride=self.conv3.stride, padding = self.conv3.padding)
         out = self.bn3(out)
-        # shortcut = self.shortcut(inputs) if self.stride == 1 else out
         if self.stride == 1:
             if len(self.shortcut) > 1:
                 w = self.shortcut[0].weight
@@ -76,14 +68,10 @@ class Block(nn.Module):
                 shortcut = inputs
         else :
             shortcut = out
-        # Squeeze-Excitation
-        # multi = F.avg_pool2d(out, out.size(2))
         multi = F.adaptive_avg_pool2d(out, 1)
-        # w = F.relu(self.fc1(w))
         w = func_update(self.fc1.weight, self.kf1)
         multi = F.conv2d(multi, w, bias=self.fc1.bias, stride=self.fc1.stride, padding = self.fc1.padding)
         multi = F.relu(multi)
-        # w = self.fc2(w).sigmoid()
         w = func_update(self.fc2.weight, self.kf2)
         multi = F.conv2d(multi, w, bias=self.fc2.bias, stride=self.fc2.stride, padding = self.fc2.padding)
         multi = multi.sigmoid()
@@ -124,7 +112,6 @@ class Block_redu(nn.Module):
         out = F.relu(self.bn2(self.conv2(out)))
         out = self.bn3(self.conv3(out))
         shortcut = self.shortcut(x) if self.stride == 1 else out
-        # Squeeze-Excitation
         w = F.avg_pool2d(out, out.size(2))
         w = F.relu(self.fc1(w))
         w = self.fc2(w).sigmoid()
@@ -155,7 +142,7 @@ class EfficientNet(nn.Module):
                 layers.append(Block(in_planes, out_planes, expansion, stride))
                 in_planes = out_planes
         return nn.Sequential(*layers)
-    
+
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.layers(out)

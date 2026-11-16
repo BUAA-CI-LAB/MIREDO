@@ -1,6 +1,3 @@
-# this file is prepared for project 026
-# Created by iboxl
-
 from cgi import print_directory
 from pickle import FALSE
 from typing import Union, List, Dict, Any, cast
@@ -24,11 +21,8 @@ def make_layers(cfg: List[Union[str, int]], batch_norm: bool = False) -> nn.Sequ
                 layers += [conv2d, nn.ReLU(inplace=True)]
             in_channels = v
     return nn.Sequential(*layers)
-    
+
 cfgs: Dict[str, List[Union[str, int]]] = {
-# "A": [64, "M", 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
-# "B": [64, 64, "M", 128, 128, "M", 256, 256, "M", 512, 512, "M", 512, 512, "M"],
-#"D": [64, 64, "M", 128, 128, "M", 256, 256, 256, "M", 512, 512, 512, "M", 512, 512, 512, "M"],
 "E": [64, 64, "M", 128, 128, "M", 256, 256, 256, 256, "M", 512, 512, 512, 512, "M", 512, 512, 512, 512],
 }
 

@@ -1,9 +1,3 @@
-# MIREDO HardwareSpec —— CIM accelerator 物理硬件的唯一数据源
-#
-# 描述 digital SRAM CIM 加速器。由 CIM_Acc.from_spec() 构造 MIREDO
-# 内部表示；由 zigzag_adapter.to_zigzag_accelerator() 翻译到 ZigZag。
-# MIREDO 内部索引表（mem2dict、nxtMem 等）不在此存储，由构造器派生。
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
@@ -81,11 +75,6 @@ class MacroSpec:
     tech_params: TechParams
     spatial_axes: List[SpatialAxisSpec]
     compartment_depth: int = 8
-    # Ping-pong-capable weight store. False = memory and compute modes are
-    # mutually exclusive, so the weight tile is single-buffered. True = the macro
-    # may write one weight bank while computing on the other; the MIP decides
-    # weight double buffering at the Macro level, and two tiles share the same
-    # compartment_depth.
     weight_double_buffer: bool = False
 
     @classmethod
